@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Exit if server is already running at port 8000
+curl -sf localhost:8000/health >/dev/null && { echo "server already on :8000"; exit 1; }
+
 source "$(dirname "$0")/../env/env.sh"
 source "$VLLM_VENV/bin/activate"
 

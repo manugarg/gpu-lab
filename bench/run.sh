@@ -11,6 +11,8 @@ common=(--model "$MODEL" --dataset-name random
         --random-input-len 1024 --random-output-len 256
         --save-result --result-dir "$OUT")
 
+"$(dirname "$0")/../serve/wait-ready.sh"
+
 vllm bench serve "${common[@]}" --request-rate 4 --num-prompts 1000 \
   --label "${LABEL}-rate4"
 
