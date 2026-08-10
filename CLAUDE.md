@@ -14,6 +14,23 @@ Core Ultra 9 285K, 64GB DDR5. Ubuntu 26.04.
 - Two venvs: ~/venvs/vllm is frozen and benchmark-only.
   ~/venvs/vllm-dev holds the editable checkout.
 
+## Invocation
+Don't invoke `vllm serve` / `vllm bench serve` directly or hand-set
+CUDA_HOME/TORCH_CUDA_ARCH_LIST/MODEL/SERVE_ARGS — use these scripts,
+which all source env/env.sh:
+- `env/setup.sh` — run first. Checks nvcc is 13.3, sm_120/compute_120
+  is present, torch reports cap (12, 0), and flashinfer-python/-cubin/
+  -jit-cache versions match.
+- `serve/serve.sh [extra vllm args]` — serves MODEL with SERVE_ARGS,
+  execs so it stays in the foreground.
+- `bench/run.sh <label>` — rate-4 and saturated benchmark passes
+  against MODEL, results under bench/results. Use instead of ad hoc
+  `vllm bench serve` calls so runs stay comparable to the baseline
+  below.
+- `profile/capture.sh <label>` — serves MODEL with the torch profiler
+  attached and runs a short saturated pass; traces land in
+  /tmp/vllm_traces/<label>.
+
 ## Packaging rules
 - ALWAYS use --no-deps for repairs. Re-resolution is what breaks this
   environment; it has cost hours twice.
