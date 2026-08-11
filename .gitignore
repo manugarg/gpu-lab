@@ -1,0 +1,4 @@
+*.trace.json.gz
+/profile/results/
+/bench/results/
+__pycache__/
