@@ -11,7 +11,8 @@ LABEL="${1:?usage: capture.sh <label>}"
 TRACE_DIR="/tmp/vllm_traces/$LABEL"
 mkdir -p "$TRACE_DIR"
 
-VLLM_TORCH_PROFILER_DIR="$TRACE_DIR" vllm serve "$MODEL" $SERVE_ARGS &
+vllm serve "$MODEL" $SERVE_ARGS \
+  --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"$TRACE_DIR\"}" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
 
