@@ -1,7 +1,8 @@
-import gzip, json, re, sys, os, glob, collections
+import json, re, sys, os, glob, collections
+from _lib import load_trace
 
-path = sys.argv[1] if len(sys.argv) > 1 else "trace.pt.trace.json.gz"
-ev = json.load(gzip.open(path))["traceEvents"]
+path = sys.argv[1] if len(sys.argv) > 1 else "."
+ev = load_trace(path)
 
 NK_RE = re.compile(r"gemm\w*_impl<\d+u,\s*(\d+)u,\s*(\d+)u")
 
@@ -80,6 +81,12 @@ total_us = sum(agg_us.values())
 if SHAPES is None:
     print(f"warning: no cached config.json for MODEL={os.environ.get('MODEL', '(unset)')}; "
           f"attention-proj/mlp GEMMs will show as 'gemm (unrecognized shape ...)'\n")
+else:
+    print(f"GEMM shapes (N x K) used for classification, from MODEL="
+          f"{os.environ.get('MODEL', 'Qwen/Qwen3-14B-FP8')}'s config.json:")
+    for label, shapes in SHAPES.items():
+        print(f"  {label:<24} " + ", ".join(f"{n}x{k}" for n, k in shapes))
+    print()
 
 print(f"{'component':<32} {'calls':>7} {'gpu ms':>10} {'%':>7}")
 for cat, us in agg_us.most_common():

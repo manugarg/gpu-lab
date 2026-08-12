@@ -7,7 +7,10 @@ REGRESSION_PCT = 5
 
 def load_results(label):
     root = os.path.dirname(os.path.abspath(__file__))
+    # bench/run.sh's proper rate4+saturated pair, plus capture.sh's own
+    # (tiny, saturated-only) bench run saved alongside its trace.
     paths = sorted(glob.glob(os.path.join(root, "results", f"{label}*.json")))
+    paths += sorted(glob.glob(os.path.join(root, "..", "profile", "results", label, "*.json")))
     return [(p, json.load(open(p))) for p in paths]
 
 
@@ -21,7 +24,7 @@ def fmt_delta(value, baseline_value, lower_is_better):
 def run(label):
     results = load_results(label)
     if not results:
-        print(f"no bench/results/{label}*.json found")
+        print(f"no bench/results/{label}*.json or profile/results/{label}/*.json found")
         return
     for path, r in results:
         print(f"\n{os.path.basename(path)}")

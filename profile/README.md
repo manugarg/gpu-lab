@@ -6,13 +6,15 @@
    (`--request-rate inf --num-prompts 20`), then exits. Defaults to
    1024/256 (the baseline shape in ../CLAUDE.md) if lengths are
    omitted. Fails fast if something's already listening on :8000.
-3. Traces and a `meta.txt` (shape + timestamp) land in
-   `results/<label>/` — gitignored, local only.
-4. `../bench/run.sh <label>` (optional) — same label, adds throughput
-   numbers to the report below.
-5. `python3 ../report.py <label>` — prints everything in one shot:
-   bench stats (if `bench/run.sh` was run with this label) vs. the
-   ../CLAUDE.md baseline, top kernels, prefill/decode split, and the
+   Saves both the trace and a `--save-result` JSON (throughput/TTFT/
+   TPOT for that 20-prompt saturated pass) into `results/<label>/`.
+3. `../bench/run.sh <label>` (optional) — same label, adds the proper
+   rate-4 + saturated comparison against the ../CLAUDE.md baseline;
+   capture.sh's own bench numbers are from a tiny saturated-only
+   sample and aren't compared against it.
+4. `python3 ../report.py <label>` — prints everything in one shot:
+   bench stats (from either/both of the above, whichever exist for
+   this label), top kernels, prefill/decode split, and the
    attention/mlp/norm/quant component split. This is the normal way
    to look at a capture — the scripts below are what it calls, useful
    standalone if you only want one piece.
@@ -39,9 +41,11 @@
   split-k reduce kernels carry no shape of their own; they inherit
   the category of the GEMM immediately before them on the same CUDA
   stream.
-- `../bench/summarize.py <label>` — reads `bench/results/<label>*.json`
-  (written by `bench/run.sh`) and diffs throughput/TTFT/TPOT against
-  the ../CLAUDE.md baseline for the `rate4` shape.
+- `../bench/summarize.py <label>` — reads any `bench/results/<label>*.json`
+  (from `bench/run.sh`) and `results/<label>/*.json` (from `capture.sh`),
+  and diffs throughput/TTFT/TPOT against the ../CLAUDE.md baseline for
+  whichever result has "rate4" in its label — capture.sh's saturated-only
+  sample never matches that and is shown without a diff.
 
 ## Picking a label/shape
 

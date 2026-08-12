@@ -23,7 +23,8 @@ trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
 
 vllm bench serve --model "$MODEL" --dataset-name random \
   --random-input-len "$INPUT_LEN" --random-output-len "$OUTPUT_LEN" \
-  --request-rate inf --num-prompts 20 --profile
+  --request-rate inf --num-prompts 20 --profile \
+  --save-result --result-dir "$TRACE_DIR" --label "$LABEL"
 
 echo "traces in $TRACE_DIR"
 

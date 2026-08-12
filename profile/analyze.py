@@ -1,7 +1,8 @@
-import gzip, json, collections, sys
+import collections, sys
+from _lib import load_trace
 
-path = sys.argv[1] if len(sys.argv) > 1 else "trace.pt.trace.json.gz"
-ev = json.load(gzip.open(path))["traceEvents"]
+path = sys.argv[1] if len(sys.argv) > 1 else "."
+ev = load_trace(path)
 agg = collections.Counter()
 for e in ev:
     if e.get("cat") == "kernel":

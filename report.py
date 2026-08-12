@@ -6,6 +6,8 @@ if len(sys.argv) < 2:
 
 label = sys.argv[1]
 root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(root, "profile"))
+from _lib import resolve_trace
 
 
 def section(title, cmd):
@@ -13,15 +15,23 @@ def section(title, cmd):
     subprocess.run(cmd, check=False)
 
 
-if glob.glob(os.path.join(root, "bench", "results", f"{label}*.json")):
+has_bench_results = glob.glob(os.path.join(root, "bench", "results", f"{label}*.json")) or glob.glob(
+    os.path.join(root, "profile", "results", label, "*.json")
+)
+if has_bench_results:
     section("bench", [sys.executable, os.path.join(root, "bench", "summarize.py"), label])
 else:
-    print(f"(no bench/results/{label}*.json - skipping bench summary)", flush=True)
+    print(f"(no bench/results/{label}*.json or profile/results/{label}/*.json - skipping bench summary)", flush=True)
 
-trace_path = os.path.join(root, "profile", "results", label, "trace.pt.trace.json.gz")
-if os.path.exists(trace_path):
+trace_dir = os.path.join(root, "profile", "results", label)
+try:
+    trace_path = resolve_trace(trace_dir)
+except FileNotFoundError:
+    trace_path = None
+
+if trace_path:
     section("top kernels", [sys.executable, os.path.join(root, "profile", "analyze.py"), trace_path])
     section("phases (prefill/decode)", [sys.executable, os.path.join(root, "profile", "phases.py"), trace_path])
     section("components (attention/mlp/norm/quant)", [sys.executable, os.path.join(root, "profile", "components.py"), trace_path])
 else:
-    print(f"(no profile/results/{label}/trace.pt.trace.json.gz - skipping trace analysis)", flush=True)
+    print(f"(no *.pt.trace.json.gz under profile/results/{label}/ - skipping trace analysis)", flush=True)
