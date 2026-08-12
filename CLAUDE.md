@@ -27,9 +27,14 @@ which all source env/env.sh:
   against MODEL, results under bench/results. Use instead of ad hoc
   `vllm bench serve` calls so runs stay comparable to the baseline
   below.
-- `profile/capture.sh <label>` — serves MODEL with the torch profiler
-  attached and runs a short saturated pass; traces land in
-  /tmp/vllm_traces/<label>.
+- `profile/capture.sh <label> [input_len] [output_len]` — serves MODEL
+  with the torch profiler attached and runs a short saturated pass;
+  traces land in profile/results/<label>.
+- `report.py <label>` — the normal way to read results back: prints
+  bench stats vs. the baseline below (if `bench/run.sh` was run with
+  this label) plus top kernels, prefill/decode split, and the
+  attention/mlp/norm/quant split (if `profile/capture.sh` was). See
+  profile/README.md for what each piece does individually.
 
 ## Packaging rules
 - ALWAYS use --no-deps for repairs. Re-resolution is what breaks this
