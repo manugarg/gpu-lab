@@ -18,6 +18,18 @@
    idle/scheduling gap between calls. "Mixed" steps interleave both
    in one call (continuous batching) and can only be split
    approximately, by token share.
+6. `python3 components.py results/<label>/trace.pt.trace.json.gz` —
+   splits GPU time by component: attention (core/kv-cache), MLP,
+   attention-proj, norm, quant, sampling. The attention/mlp GEMM split
+   can't be read off the call stack (torch.compile fuses per-layer
+   Python calls into opaque compiled graphs), so it's inferred from
+   each GEMM kernel's (N, K) shape against the projection shapes
+   computed from the MODEL's cached HF config.json — exact for this
+   model, but will silently show as "gemm (unrecognized shape ...)"
+   for an architecture this script doesn't know how to derive shapes
+   for (e.g. MoE). deep_gemm's split-k reduce kernels carry no shape
+   of their own; they inherit the category of the GEMM immediately
+   before them on the same CUDA stream.
 
 ## Picking a label/shape
 
