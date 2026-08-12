@@ -10,6 +10,14 @@
    `results/<label>/` — gitignored, local only.
 4. `python3 analyze.py results/<label>/trace.pt.trace.json.gz` —
    prints the top 25 kernels by total duration and % of tracked time.
+5. `python3 phases.py results/<label>/trace.pt.trace.json.gz` —
+   splits GPU time into prefill / decode / mixed using the
+   `execute_context_<n>(<ctx_tok>)_generation_<n>(<gen_tok>)`
+   annotations vLLM emits per forward call (see
+   `gpu_worker.py`'s `annotate_context_manager` call), plus the
+   idle/scheduling gap between calls. "Mixed" steps interleave both
+   in one call (continuous batching) and can only be split
+   approximately, by token share.
 
 ## Picking a label/shape
 
