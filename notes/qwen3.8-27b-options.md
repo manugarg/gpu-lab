@@ -80,12 +80,9 @@ the companion GGUF repo at check time.
 ### VRAM footprint: computed 2026-08-14
 
 Weights, from actual on-disk safetensors sizes (HF tree API — this is what
-lands on GPU, not a parameter-count estimate):
-
-| checkpoint | weights |
-|---|---|
-| `soyrsoyr` AWQ+GPTQ int4 | 27.67 GB |
-| `unsloth` NVFP4 mixed | 23.42 GB |
+lands on GPU, not a parameter-count estimate): `soyrsoyr` 27.67 GB vs.
+`unsloth` 23.42 GB (full four-way ranking including the two checkpoints
+below is later in this file).
 
 Counterintuitive: the "int4" checkpoint is *larger*. Its `recipe.yaml`
 targets `Linear` broadly but its `ignore` list excludes all 48 `linear_attn`
@@ -115,6 +112,46 @@ Not yet done: run both through `bench/run.sh` / `report.py` for real
 measured numbers instead of this derivation — vLLM logs its own memory
 breakdown at startup, which is the authoritative check.
 
+### `Qwen/Qwen3.8-27B-FP8` — real, official, but too large for us
+
+First-party release from the Qwen team. Fine-grained FP8, block size 128,
+`activation_scheme: dynamic`. Only vision blocks are in
+`modules_to_not_convert` — unlike the two checkpoints above, this one
+*does* quantize the `linear_attn` layers, just at FP8 (8-bit) rather than
+NVFP4 (4-bit). Total weights: **30.89 GB** (64 `layers-N.safetensors` +
+`outside.safetensors` for embeddings/lm_head + `mtp.safetensors`) — the
+largest of the four real checkpoints found, because it's 8-bit almost
+everywhere rather than 4-bit where it can afford to be. Leaves only ~1GB
+of a 32GB card for KV cache + state + CUDA context — not practical here
+despite being the most "official"/trustworthy source.
+
+### `huginnfork/Qwen3.8-27B-NVFP4A16` — real, but larger than Unsloth's
+
+NVFP4 (group_size 16, FP8 scales), `targets: ["Linear"]` broadly — same
+structural pattern as `soyrsoyr`'s int4 checkpoint: the `ignore` list
+excludes all `linear_attn` sub-layers (336 of 519 ignored tensor names),
+`lm_head`, and MTP, leaving them at bf16. Total: **30.99 GB** — larger even
+than the official FP8 release, because the untouched `linear_attn` layers
+(bf16, 16-bit) dominate the total despite the quantized portion being 4-bit.
+Same uploader also has a `Qwen3.8-27B-FP8` variant, not yet checked.
+
+This is the clearest confirmation yet that **whether a checkpoint touches
+the `linear_attn` layers matters far more than which bit-width it uses for
+the rest** — see the ranked comparison below.
+
+### Ranked by actual weight size (all four verified via HF API, 2026-08-14)
+
+| checkpoint | weights | touches `linear_attn`? |
+|---|---|---|
+| `unsloth/Qwen3.8-27B-NVFP4` | 23.42 GB | yes (FP8) |
+| `soyrsoyr/...-AWQ-GPTQ` | 27.67 GB | no (bf16) |
+| `Qwen/Qwen3.8-27B-FP8` (official) | 30.89 GB | yes (FP8, not FP4) |
+| `huginnfork/...-NVFP4A16` | 30.99 GB | no (bf16) |
+
+Unsloth's is the only one that's both small enough to leave real headroom
+on a 32GB card *and* touches `linear_attn` — it's the only checkpoint doing
+both things that actually shrink the footprint.
+
 ### `shawnw3i/Qwen3.8-27B-AWQ-MTP` — placeholder, skip
 
 HF repo exists but contains only `.gitattributes` — no weights. Checked
@@ -131,6 +168,24 @@ isn't RAM/VRAM constrained. Not evaluated further: haven't checked whether
 llama.cpp has this hybrid-attention + MTP architecture implemented at all —
 a GGUF file existing doesn't imply the inference code does, same issue as
 vLLM's own architecture registry, just a different project's registry.
+
+## Known vLLM bug: MTP breaks tool calling (open, likely still applies)
+
+vLLM issue #46249: enabling MTP speculative decoding
+(`--speculative-config '{"method":"mtp","num_speculative_tokens":2}'`) on
+Qwen3.6-27B breaks tool calling on the Responses API — "Failed to advance
+FSM for request", a grammar-rejection error. Works fine with MTP disabled.
+Filed against v0.23.1rc1.dev207, **still open** at check time, blamed on a
+regression in PR #45413, no fix or workaround beyond removing
+`--speculative-config` or reverting to v0.23.0.
+
+This was filed against Qwen3.6-27B, not 3.8 — but confirmed via its
+`config.json` that Qwen3.6-27B uses the exact same
+`Qwen3_5ForConditionalGeneration` architecture class as Qwen3.8-27B, i.e.
+the same vLLM code path. Worth testing tool calling with MTP enabled before
+relying on both — the recipe recommends MTP for speed and touts "agentic
+planning" as a strength, and those two recommendations may conflict right
+now.
 
 ## Unverified external claims
 
@@ -150,6 +205,9 @@ about accessibility, not about this rig specifically.
 
 ## Open questions
 
+- Does vLLM #46249 (MTP breaks tool calling) actually reproduce on our
+  v0.26.0 checkout, or has it been fixed since the v0.23.x it was filed
+  against? Test before assuming either way.
 - Does `--linear-backend flashinfer_b12x` actually work correctly (the
   upstream bug it's blocked on might or might not affect this model's
   shapes) and is it faster than the default `FlashInferCutlass` path?
