@@ -1,10 +1,17 @@
 # Qwen3.8-27B: deployment options
 
 Running notes on deploying Qwen3.8-27B on this rig (one RTX 5090, sm_120).
-Not a decision yet — a log of what's been checked and what's still open.
 See `quantization.md` for what AWQ/GPTQ/W4A16/Marlin/NVFP4 actually mean,
 and `hybrid-attention-and-kv-cache.md` for why this model's KV cache is
 smaller per-token than our much smaller Qwen3-14B baseline.
+
+**Leaning towards `unsloth/Qwen3.8-27B-NVFP4`** — smallest verified weights
+(23.42 GB) among five real checkpoints checked, the only one that shrinks
+its footprint by touching `linear_attn` *and* using true 4-bit for most of
+it, lands on kernel paths already confirmed fast on this card (FP8 +
+FlashInferCutlass NVFP4), from an established quantizer. Not committed —
+still want real `bench/run.sh`/`report.py` numbers once it's downloaded,
+and the open questions below (esp. MTP/tool-calling) are unresolved.
 
 ---
 
@@ -151,6 +158,13 @@ the rest** — see the ranked comparison below.
 Unsloth's is the only one that's both small enough to leave real headroom
 on a 32GB card *and* touches `linear_attn` — it's the only checkpoint doing
 both things that actually shrink the footprint.
+
+Checked Unsloth's own collection page (huggingface.co/collections/unsloth/
+qwen38) for anything missed: `unsloth/Qwen3.8-27B-FP8` is a mirror of the
+official Qwen release, not a distinct option — identical file layout and
+total size (30.89 GB, same `layers-N.safetensors`/`outside.safetensors`/
+`mtp.safetensors` split). `unsloth/Qwen3.8-2.4T-A95B-GGUF` is a different,
+much larger MoE model in the same naming family — not this model.
 
 ### `shawnw3i/Qwen3.8-27B-AWQ-MTP` — placeholder, skip
 
