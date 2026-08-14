@@ -45,10 +45,32 @@ which all source env/env.sh:
 - Never suggest FLASHINFER_DISABLE_VERSION_CHECK=1.
 
 ## Known sm_120 gaps
+(AWQ/GPTQ/W4A16/Marlin/NVFP4 terms below: see notes/quantization.md)
 - DeepGEMM asserts "Unknown SF transformation" on some weight-loading
   paths. VLLM_USE_DEEP_GEMM=0 falls back to CUTLASS — a few percent
   slower, fully working.
-- NVFP4 checkpoints fall back to Marlin W4A16 on sm_120. Prefer FP8/AWQ.
+- NVFP4 dense linear layers do NOT fall back to Marlin on sm_120 —
+  verified 2026-08-14 against vllm-dev (v0.26.0) + flashinfer
+  0.6.16.post3 by reading vllm/model_executor/kernels/linear/
+  __init__.py's `_POSSIBLE_NVFP4_KERNELS[CUDA]` priority list and
+  running the actual capability checks on this GPU:
+  - FlashInferCuteDsl: needs capability *family* 100 (exact match,
+    datacenter Blackwell only) — fails on sm_120.
+  - FlashInferB12x: the native SM120 kernel. Present in our FlashInfer
+    build (`Sm120B12xBlockScaledDenseGemmKernel` exists) but hardcoded
+    out of auto-selection in vLLM pending an upstream CUTLASS SM121
+    MMA-op-guard bug. Opt in explicitly with
+    `--linear-backend flashinfer_b12x` if benchmarking it.
+  - FlashInferCutlass: needs `has_device_capability(100)`, which is a
+    `>=` check (120 passes) — `cutlass_scaled_mm_supports_fp4()`
+    returns True on this GPU. **This is the kernel that actually gets
+    picked.** A real native FP4 GEMM path, not an emulation.
+  - Marlin is 4th in the list and never reached for dense NVFP4.
+  This was previously believed to fall back to Marlin; that was
+  wrong, or became wrong. NVFP4 MoE is a separate, still-messier
+  story (open vLLM issue #31085 re: SM120 MoE backend selection,
+  assorted FlashInfer SM120 MoE correctness bugs) — irrelevant to
+  dense models but don't generalize the dense finding to MoE.
 
 ## Baseline
 Qwen3-14B-FP8, 1024/256, rate 4: 1011 tok/s out, TPOT 15.9ms,
