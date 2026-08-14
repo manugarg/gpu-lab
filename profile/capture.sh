@@ -12,7 +12,8 @@ INPUT_LEN="${2:-1024}"
 OUTPUT_LEN="${3:-256}"
 TRACE_DIR="$(dirname "$0")/results/$LABEL"
 mkdir -p "$TRACE_DIR"
-echo "$INPUT_LEN/$OUTPUT_LEN $(date -Iseconds)" > "$TRACE_DIR/meta.txt"
+echo "MODEL=$MODEL" > "$TRACE_DIR/meta.txt"
+echo "$INPUT_LEN/$OUTPUT_LEN $(date -Iseconds)" >> "$TRACE_DIR/meta.txt"
 
 vllm serve "$MODEL" $SERVE_ARGS \
   --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"$TRACE_DIR\"}" &

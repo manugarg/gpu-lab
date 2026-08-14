@@ -7,28 +7,44 @@ ev = load_trace(path)
 NK_RE = re.compile(r"gemm\w*_impl<\d+u,\s*(\d+)u,\s*(\d+)u")
 
 
-def model_proj_shapes():
-    model = os.environ.get("MODEL", "Qwen/Qwen3-14B-FP8")
+def resolve_model(path):
+    """The MODEL a trace belongs to: prefer the capture's own meta.txt (written
+    by capture.sh) over the MODEL env var, which may be unset or stale for
+    whichever model was last served interactively."""
+    meta = os.path.join(path, "meta.txt") if os.path.isdir(path) else None
+    if meta and os.path.exists(meta):
+        for line in open(meta):
+            if line.startswith("MODEL="):
+                return line.strip().split("=", 1)[1]
+    return os.environ.get("MODEL", "Qwen/Qwen3-14B-FP8")
+
+
+def model_proj_shapes(model):
     hf_home = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
     cache_name = "models--" + model.replace("/", "--")
     hits = glob.glob(os.path.join(hf_home, "hub", cache_name, "snapshots", "*", "config.json"))
     if not hits:
         return None
     cfg = json.load(open(hits[0]))
-    hidden = cfg["hidden_size"]
-    inter = cfg["intermediate_size"]
-    heads = cfg["num_attention_heads"]
-    kv_heads = cfg.get("num_key_value_heads", heads)
-    head_dim = cfg.get("head_dim", hidden // heads)
+    # multimodal configs (this one included) nest the text model's dims under
+    # text_config instead of at the top level
+    text_cfg = cfg.get("text_config", cfg)
+    hidden = text_cfg["hidden_size"]
+    inter = text_cfg["intermediate_size"]
+    heads = text_cfg["num_attention_heads"]
+    kv_heads = text_cfg.get("num_key_value_heads", heads)
+    head_dim = text_cfg.get("head_dim", hidden // heads)
+    vocab = text_cfg.get("vocab_size", cfg.get("vocab_size"))
     q, kv = heads * head_dim, kv_heads * head_dim
     return {
         "attention-proj (gemm)": [(q + 2 * kv, hidden), (hidden, q)],  # qkv_proj, o_proj
         "mlp (gemm)": [(2 * inter, hidden), (hidden, inter)],  # gate_up_proj, down_proj
-        "lm_head (gemm)": [(cfg["vocab_size"], hidden)],
+        "lm_head (gemm)": [(vocab, hidden)],
     }
 
 
-SHAPES = model_proj_shapes()
+MODEL_NAME = resolve_model(path)
+SHAPES = model_proj_shapes(MODEL_NAME)
 
 
 def classify(name):
@@ -79,11 +95,11 @@ for e in kern:
 
 total_us = sum(agg_us.values())
 if SHAPES is None:
-    print(f"warning: no cached config.json for MODEL={os.environ.get('MODEL', '(unset)')}; "
+    print(f"warning: no cached config.json for MODEL={MODEL_NAME}; "
           f"attention-proj/mlp GEMMs will show as 'gemm (unrecognized shape ...)'\n")
 else:
     print(f"GEMM shapes (N x K) used for classification, from MODEL="
-          f"{os.environ.get('MODEL', 'Qwen/Qwen3-14B-FP8')}'s config.json:")
+          f"{MODEL_NAME}'s config.json:")
     for label, shapes in SHAPES.items():
         print(f"  {label:<24} " + ", ".join(f"{n}x{k}" for n, k in shapes))
     print()
