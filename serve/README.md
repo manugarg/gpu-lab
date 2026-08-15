@@ -26,7 +26,7 @@ often, so re-check rather than copying from blog posts.
 | `-c 262144` | Context size. This model's full native window. Verified to fit **only** with quantized KV below. |
 | `-fa on` | Flash attention. Required for quantized V cache; also cuts attention memory. Default is `auto`, which won't reliably give you it. |
 | `-ctk q8_0 -ctv q8_0` | Quantize the KV cache to 8-bit. **Not optional at 262K.** llama.cpp's default f16 KV is 64 KB/token, so 262K wants a 16 GiB allocation and OOMs outright. q8_0 halves that to ~8 GiB and fits (28.7 GiB of 32.1 GiB total). |
-| `--host 127.0.0.1` | Localhost only by default. Override with `LLAMA_HOST` to expose it — see "Remote access" below. |
+| `--host` | `0.0.0.0` by default here (see "Remote access"), so LAN machines can reach it. `LLAMA_HOST=127.0.0.1` for local-only. |
 | `--port 8080` | llama.cpp's default; deliberately not vLLM's 8000, so the port check distinguishes the two. |
 
 Anything extra is passed straight through, e.g.:
@@ -75,35 +75,40 @@ Left unset in `llama.sh` so callers decide per request.
 
 ## Remote access
 
-`gandalf` is on a tailnet (`100.80.215.7` / `gandalf.tail07156.ts.net`)
-alongside the other machines, and sshd is listening. Options, roughly
-best-first:
+Binds to `0.0.0.0` by default (set in `env/env.sh`), so other machines
+reach it directly over plain HTTP — no tunnel, no cert. Verified working
+from both addresses:
 
-**Tailscale, TLS terminated by Tailscale.** Leaves the server on
-localhost; Tailscale gets a real trusted cert, so no cert warnings:
 ```
-./serve/llama.sh          # unchanged, 127.0.0.1
-tailscale serve --bg 8080 # -> https://gandalf.tail07156.ts.net/
+http://192.168.86.15:8080/v1/chat/completions   # LAN
+http://100.80.215.7:8080/v1/chat/completions    # tailnet (gandalf.tail07156.ts.net)
 ```
 
-**Tailscale, direct bind.** Simpler, no proxy. Plaintext HTTP, but
-Tailscale encrypts device-to-device over WireGuard, so it's still
-encrypted on the wire:
-```
-LLAMA_HOST=100.80.215.7 ./serve/llama.sh
-```
+It's an OpenAI-compatible API, so most clients just need the base URL
+`http://192.168.86.15:8080/v1` and any non-empty API key. Model name is
+`qwen3.8-27b` (the `--alias`).
 
-**SSH tunnel**, for anything not on the tailnet — no server change:
+This is deliberate for a LAN that isn't reachable from outside. What it
+means in practice: anything on the network can use the GPU and read
+prompts/responses in the clear. `LLAMA_HOST=127.0.0.1` reverts to
+local-only; the tunnel options below and TLS are there if the threat
+model ever changes.
+
+<details>
+<summary>Tunnelled alternatives (not used here)</summary>
+
+Tailscale terminating real TLS, server staying on localhost:
+```
+LLAMA_HOST=127.0.0.1 ./serve/llama.sh
+tailscale serve --bg 8080   # -> https://gandalf.tail07156.ts.net/
+```
+SSH tunnel, for anything not on the tailnet:
 ```
 ssh -N -L 8080:localhost:8080 manugarg@gandalf.tail07156.ts.net
 ```
+</details>
 
-**LAN bind** (`LLAMA_HOST=0.0.0.0`). Fine on a trusted LAN, which is the
-call made here. Be aware of what it is though: without TLS below, an
-unauthenticated LLM reachable by anything on the network, with prompts
-and responses — and any `--api-key` — crossing the wire in cleartext.
-
-### TLS
+### TLS (optional)
 
 Requires a build with OpenSSL. The original build silently produced a
 no-HTTPS binary (`OpenSSL not found, HTTPS support disabled` at configure
@@ -185,7 +190,7 @@ All read from `env/env.sh`, all overridable per-invocation:
 | `LLAMA_GGUF_FILE` | `Qwen3.8-27B-UD-Q5_K_XL.gguf` |
 | `LLAMA_GGUF` | (resolved from the two above; set to bypass) |
 | `LLAMA_CTX` | `262144` |
-| `LLAMA_HOST` / `LLAMA_PORT` | `127.0.0.1` / `8080` |
+| `LLAMA_HOST` / `LLAMA_PORT` | `0.0.0.0` / `8080` |
 | `LLAMA_ALIAS` | `qwen3.8-27b` |
 | `LLAMA_SSL_CERT` / `LLAMA_SSL_KEY` | unset (TLS off; set both or neither) |
 
