@@ -2,8 +2,11 @@
 
 Running notes on deploying Qwen3.8-27B on this rig (one RTX 5090, sm_120).
 See `quantization.md` for what AWQ/GPTQ/W4A16/Marlin/NVFP4 actually mean,
-and `hybrid-attention-and-kv-cache.md` for why this model's KV cache is
-smaller per-token than our much smaller Qwen3-14B baseline.
+`hybrid-attention-and-kv-cache.md` for why this model's KV cache is
+smaller per-token than our much smaller Qwen3-14B baseline, and
+`llamacpp-vs-vllm.md` for measured llama.cpp/vLLM numbers on this rig
+(decode is a tie; vLLM wins prefill ~3.8x; llama.cpp reaches the full
+262K context vs vLLM's ~190K with these checkpoints).
 
 **Leaning towards `unsloth/Qwen3.8-27B-NVFP4`** — smallest verified weights
 (23.42 GB) among five real checkpoints checked, the only one that shrinks
@@ -284,8 +287,11 @@ about accessibility, not about this rig specifically.
 - Does `--linear-backend flashinfer_b12x` actually work correctly (the
   upstream bug it's blocked on might or might not affect this model's
   shapes) and is it faster than the default `FlashInferCutlass` path?
-- Does llama.cpp support this architecture yet, if GGUF is ever worth
-  revisiting?
+- ~~Does llama.cpp support this architecture yet?~~ Answered
+  2026-08-14: yes. Built it with CUDA and benchmarked — see
+  `llamacpp-vs-vllm.md`. Its Gated DeltaNet is still the "basic vector
+  implementation" per its own merge PR, so re-check its decode number
+  periodically; it should improve.
 - A real `bench/run.sh` rate-4 comparison against the baseline — the
   2026-08-14 run above was only a quick saturated sample from
   `capture.sh`, not a fair throughput/TTFT/TPOT comparison.
