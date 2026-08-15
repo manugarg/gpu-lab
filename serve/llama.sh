@@ -32,6 +32,19 @@ used_mib=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | he
   exit 1
 }
 
+# TLS is opt-in: set both LLAMA_SSL_CERT and LLAMA_SSL_KEY. Requires a
+# build with OpenSSL (see serve/README.md) — without it llama-server
+# doesn't expose these flags at all and would fail on unknown argument.
+tls=()
+if [ -n "${LLAMA_SSL_CERT:-}" ] || [ -n "${LLAMA_SSL_KEY:-}" ]; then
+  [ -n "${LLAMA_SSL_CERT:-}" ] && [ -n "${LLAMA_SSL_KEY:-}" ] || {
+    echo "set both LLAMA_SSL_CERT and LLAMA_SSL_KEY, or neither" >&2; exit 1; }
+  for f in "$LLAMA_SSL_CERT" "$LLAMA_SSL_KEY"; do
+    [ -r "$f" ] || { echo "cannot read $f" >&2; exit 1; }
+  done
+  tls=(--ssl-cert-file "$LLAMA_SSL_CERT" --ssl-key-file "$LLAMA_SSL_KEY")
+fi
+
 exec "$LLAMA_BIN" \
   -m "$GGUF" \
   --alias "${LLAMA_ALIAS:-qwen3.8-27b}" \
@@ -40,4 +53,5 @@ exec "$LLAMA_BIN" \
   -fa on \
   -ctk q8_0 -ctv q8_0 \
   --host "$HOST" --port "$PORT" \
+  "${tls[@]}" \
   "$@"

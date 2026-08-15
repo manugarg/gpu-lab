@@ -22,12 +22,20 @@ Then, with `SSH_AUTH_SOCK` set (see CLAUDE.md — a global
 clones through SSH):
 
 ```
+sudo apt install -y libssl-dev   # else you silently get a no-HTTPS binary
 git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/tools/llama.cpp
 cd ~/tools/llama.cpp
 cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc
+      -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc -DLLAMA_OPENSSL=ON
 cmake --build build --config Release -j $(nproc)
 ```
+
+`libssl-dev` matters more than it looks: without the headers, configure
+prints one `OpenSSL not found, HTTPS support disabled` warning amid
+hundreds of lines and builds a binary with **no** `--ssl-cert-file` /
+`--ssl-key-file` flags at all. `LLAMA_OPENSSL=ON` was already set in that
+build — the flag being on proves nothing. Check the artifact instead:
+`ldd build/bin/llama-server | grep ssl` should show `libssl.so.3`.
 
 **The `-DCMAKE_CUDA_COMPILER` pin is mandatory** — see CLAUDE.md's
 "Build hazards". Without it the build dies with a `sm_52` ptxas error

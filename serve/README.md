@@ -26,7 +26,7 @@ often, so re-check rather than copying from blog posts.
 | `-c 262144` | Context size. This model's full native window. Verified to fit **only** with quantized KV below. |
 | `-fa on` | Flash attention. Required for quantized V cache; also cuts attention memory. Default is `auto`, which won't reliably give you it. |
 | `-ctk q8_0 -ctv q8_0` | Quantize the KV cache to 8-bit. **Not optional at 262K.** llama.cpp's default f16 KV is 64 KB/token, so 262K wants a 16 GiB allocation and OOMs outright. q8_0 halves that to ~8 GiB and fits (28.7 GiB of 32.1 GiB total). |
-| `--host 127.0.0.1` | Localhost only. This is already llama.cpp's default, but it's set explicitly because it's a security property worth being able to see. Change it to `0.0.0.0` **only** if you actually want other machines to reach it — that exposes an unauthenticated LLM to your network. Pair with `--api-key` if you do. |
+| `--host 127.0.0.1` | Localhost only by default. Override with `LLAMA_HOST` to expose it — see "Remote access" below. |
 | `--port 8080` | llama.cpp's default; deliberately not vLLM's 8000, so the port check distinguishes the two. |
 
 Anything extra is passed straight through, e.g.:
@@ -72,6 +72,67 @@ of 28):
 Server-wide equivalents exist too — `--reasoning off`, or
 `--reasoning-budget N` to cap thinking length — see `llama-server --help`.
 Left unset in `llama.sh` so callers decide per request.
+
+## Remote access
+
+`gandalf` is on a tailnet (`100.80.215.7` / `gandalf.tail07156.ts.net`)
+alongside the other machines, and sshd is listening. Options, roughly
+best-first:
+
+**Tailscale, TLS terminated by Tailscale.** Leaves the server on
+localhost; Tailscale gets a real trusted cert, so no cert warnings:
+```
+./serve/llama.sh          # unchanged, 127.0.0.1
+tailscale serve --bg 8080 # -> https://gandalf.tail07156.ts.net/
+```
+
+**Tailscale, direct bind.** Simpler, no proxy. Plaintext HTTP, but
+Tailscale encrypts device-to-device over WireGuard, so it's still
+encrypted on the wire:
+```
+LLAMA_HOST=100.80.215.7 ./serve/llama.sh
+```
+
+**SSH tunnel**, for anything not on the tailnet — no server change:
+```
+ssh -N -L 8080:localhost:8080 manugarg@gandalf.tail07156.ts.net
+```
+
+**LAN bind** (`LLAMA_HOST=0.0.0.0`). Fine on a trusted LAN, which is the
+call made here. Be aware of what it is though: without TLS below, an
+unauthenticated LLM reachable by anything on the network, with prompts
+and responses — and any `--api-key` — crossing the wire in cleartext.
+
+### TLS
+
+Requires a build with OpenSSL. The original build silently produced a
+no-HTTPS binary (`OpenSSL not found, HTTPS support disabled` at configure
+time, `OPENSSL_CRYPTO_LIBRARY-NOTFOUND` in CMakeCache) — the
+`--ssl-cert-file`/`--ssl-key-file` flags simply don't exist on such a
+binary. Fixed by installing headers and reconfiguring:
+```
+sudo apt install -y libssl-dev     # matches the system libssl3t64
+cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc -DLLAMA_OPENSSL=ON
+cmake --build build --config Release -j $(nproc)
+```
+Verify it took rather than trusting the flag — `LLAMA_OPENSSL=ON` was
+already set on the broken build:
+```
+ldd build/bin/llama-server | grep -E 'ssl|crypto'   # expect libssl.so.3
+```
+
+Then set both vars (the script rejects setting only one):
+```
+LLAMA_SSL_CERT=~/certs/gandalf.crt LLAMA_SSL_KEY=~/certs/gandalf.key ./serve/llama.sh
+```
+The server logs `listening on https://...` and plain HTTP stops working.
+
+For a **real** cert rather than self-signed, Tailscale will issue one for
+the tailnet name (needs HTTPS enabled in the tailnet admin console):
+```
+tailscale cert gandalf.tail07156.ts.net
+```
 
 ## Running it continuously
 
@@ -126,6 +187,7 @@ All read from `env/env.sh`, all overridable per-invocation:
 | `LLAMA_CTX` | `262144` |
 | `LLAMA_HOST` / `LLAMA_PORT` | `127.0.0.1` / `8080` |
 | `LLAMA_ALIAS` | `qwen3.8-27b` |
+| `LLAMA_SSL_CERT` / `LLAMA_SSL_KEY` | unset (TLS off; set both or neither) |
 
 Smaller context to free VRAM for something else:
 ```
