@@ -2,16 +2,78 @@
 
 Running notes on deploying Qwen3.8-27B on this rig (one RTX 5090, sm_120).
 See `quantization.md` for what AWQ/GPTQ/W4A16/Marlin/NVFP4 actually mean,
-and `hybrid-attention-and-kv-cache.md` for why this model's KV cache is
-smaller per-token than our much smaller Qwen3-14B baseline.
+`hybrid-attention-and-kv-cache.md` for why this model's KV cache is
+smaller per-token than our much smaller Qwen3-14B baseline, and
+`llamacpp-vs-vllm.md` for measured llama.cpp/vLLM numbers on this rig
+(decode is a tie; vLLM wins prefill ~3.8x; llama.cpp reaches the full
+262K context vs vLLM's ~190K with these checkpoints).
 
 **Leaning towards `unsloth/Qwen3.8-27B-NVFP4`** — smallest verified weights
 (23.42 GB) among five real checkpoints checked, the only one that shrinks
 its footprint by touching `linear_attn` *and* using true 4-bit for most of
 it, lands on kernel paths already confirmed fast on this card (FP8 +
-FlashInferCutlass NVFP4), from an established quantizer. Not committed —
-still want real `bench/run.sh`/`report.py` numbers once it's downloaded,
-and the open questions below (esp. MTP/tool-calling) are unresolved.
+FlashInferCutlass NVFP4), from an established quantizer. Downloaded and
+run once (see "First real run" below) — it works, but only a quick
+saturated sample so far, not a real `bench/run.sh` comparison, and the
+open questions below (esp. MTP/tool-calling) are still unresolved.
+
+## First real run: 2026-08-14
+
+Downloaded (`hf download unsloth/Qwen3.8-27B-NVFP4`, 22 GiB on disk) and
+run through `profile/capture.sh qwen3.8-27b-nvfp4` (1024/256 shape, 20
+prompts, saturated) then `report.py qwen3.8-27b-nvfp4`.
+
+**Had to cap `--max-num-seqs 32`.** First attempt OOM'd during startup —
+not while serving, during CUDA graph capture's own memory profiling.
+vLLM's default `--max-num-seqs` drives cudagraph capture up to batch size
+512, and profiling memory for that means allocating linear-attention state
+for up to 512 sequences — at ~157 MB/sequence (see
+`hybrid-attention-and-kv-cache.md`) that's ~80 GB, nowhere close to fitting
+regardless of checkpoint. Nothing wrong with the checkpoint or the kernel
+path; just an unconstrained concurrency default that needs setting
+explicitly for this architecture. SERVE_ARGS used:
+`--attention-backend flashinfer --gpu-memory-utilization 0.90
+--max-model-len 16384 --kv-cache-dtype fp8_e4m3 --max-num-seqs 32`.
+
+**Bench** (20-prompt saturated sample — not the rate-4 baseline shape, not
+directly comparable to the 1011 tok/s / TPOT 15.9ms baseline): 735 tok/s
+out, TTFT 1631ms mean, TPOT 20.6ms.
+
+**Real confirmation of the kernel-selection tracing from earlier**: top
+kernels are ~73% `_ZN7cutlass13device_kernel...` (mangled CUTLASS
+symbols) — empirically confirms `FlashInferCutlassNvFp4LinearKernel` is
+what actually runs here, not Marlin, matching what the source-reading
+found. Also firing correctly: `fused_recurrent_gated_delta_rule_packed_
+decode_kernel` (9.4%) and `_causal_conv1d_*_kernel` — the linear-attention
+layers' recurrent state and conv_state, exactly matching what
+`hybrid-attention-and-kv-cache.md` predicted architecturally, now seen for
+real in a trace.
+
+**Found and fixed two real tooling bugs in the process** (both now in the
+scripts, not just worked around for this run):
+- `components.py` assumed a flat `config.json`; this model nests dims
+  under `text_config` (it's multimodal). Fixed to check both.
+- `components.py` had no way to know which model a trace belonged to
+  beyond the `MODEL` env var — got it wrong on the first `report.py` call
+  (silently used Qwen3-14B-FP8's shapes for this model, no error). Fixed:
+  `capture.sh` now records `MODEL=` in `meta.txt`, and `components.py`/
+  `report.py` read it back instead of relying on the env var being set
+  correctly by hand.
+- Also: `env/env.sh` hardcoded `MODEL`/`SERVE_ARGS` unconditionally, so
+  there was no way to point our scripts at a different model without
+  editing the baseline file. Now overridable via pre-set env vars, same
+  as `HF_HOME`/`VLLM_VENV` already were.
+
+**Known remaining gap, not fixed**: the component classifier was built
+entirely around `deep_gemm`'s friendly kernel-name template signature
+(what the FP8 baseline uses). Raw CUTLASS kernel names carry no shape
+info at all, so 77.5% of GPU time shows as "gemm (other, unattributed)"
+for this model — an honest gap, not a wrong answer, but the component
+breakdown isn't very useful here yet. It also has zero awareness of
+linear-attention kernels (`chunk_fwd`, `causal_conv1d`,
+`fused_recurrent_*`) — all fall into "other" (16.8%). Follow-up work if
+the component split needs to mean something for hybrid-attention models,
+not attempted yet.
 
 ---
 
@@ -225,7 +287,14 @@ about accessibility, not about this rig specifically.
 - Does `--linear-backend flashinfer_b12x` actually work correctly (the
   upstream bug it's blocked on might or might not affect this model's
   shapes) and is it faster than the default `FlashInferCutlass` path?
-- Does llama.cpp support this architecture yet, if GGUF is ever worth
-  revisiting?
-- Real benchmark numbers once the model + a checkpoint are actually pulled
-  down and run through `bench/run.sh` / `report.py`.
+- ~~Does llama.cpp support this architecture yet?~~ Answered
+  2026-08-14: yes. Built it with CUDA and benchmarked — see
+  `llamacpp-vs-vllm.md`. Its Gated DeltaNet is still the "basic vector
+  implementation" per its own merge PR, so re-check its decode number
+  periodically; it should improve.
+- A real `bench/run.sh` rate-4 comparison against the baseline — the
+  2026-08-14 run above was only a quick saturated sample from
+  `capture.sh`, not a fair throughput/TTFT/TPOT comparison.
+- Extend `components.py` to classify CUTLASS NVFP4/FP8 kernels and
+  linear-attention kernels, if the component breakdown needs to actually
+  mean something for this model rather than mostly "other".

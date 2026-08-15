@@ -36,6 +36,26 @@ which all source env/env.sh:
   attention/mlp/norm/quant split (if `profile/capture.sh` was). See
   profile/README.md for what each piece does individually.
 
+## Build hazards
+- There are seven nvcc binaries on this box, including /usr/bin/nvcc
+  (distro CUDA 12.4) and /usr/local/cuda-13.1 (the one the Environment
+  note above warns against). CMake picks /usr/bin/nvcc even when
+  /usr/local/cuda-13.3/bin is first on PATH, then pairs its output with
+  13.3's ptxas. The mixed toolchain fails as
+  "ptxas fatal : Value 'sm_52' is not defined for option 'gpu-name'",
+  which reads like missing Blackwell support but is not — CUDA 13
+  dropped Maxwell and the 12.4 frontend still defaults to it.
+  ALWAYS pass -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc.
+  PATH alone does not protect you. Confirm which one a failing build
+  actually used by looking for __CUDACC_VER_MAJOR__ in its output.
+- cmake is not installed system-wide. `uv tool install cmake` gets it
+  in isolation; do NOT pip-install build tools into either vllm venv.
+- A global git config rewrites https://github.com/ to git@github.com:
+  (`url.git@github.com:.insteadof`), so even https clones need the SSH
+  agent. This shell does not inherit a working SSH_AUTH_SOCK and
+  ~/.bashrc returns early for non-interactive shells, so sourcing it
+  does nothing — set SSH_AUTH_SOCK="$HOME/.ssh/ssh-agent.socket".
+
 ## Packaging rules
 - ALWAYS use --no-deps for repairs. Re-resolution is what breaks this
   environment; it has cost hours twice.

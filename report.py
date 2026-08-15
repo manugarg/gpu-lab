@@ -24,14 +24,19 @@ else:
     print(f"(no bench/results/{label}*.json or profile/results/{label}/*.json - skipping bench summary)", flush=True)
 
 trace_dir = os.path.join(root, "profile", "results", label)
+has_trace = False
 try:
-    trace_path = resolve_trace(trace_dir)
+    resolve_trace(trace_dir)
+    has_trace = True
 except FileNotFoundError:
-    trace_path = None
+    pass
 
-if trace_path:
-    section("top kernels", [sys.executable, os.path.join(root, "profile", "analyze.py"), trace_path])
-    section("phases (prefill/decode)", [sys.executable, os.path.join(root, "profile", "phases.py"), trace_path])
-    section("components (attention/mlp/norm/quant)", [sys.executable, os.path.join(root, "profile", "components.py"), trace_path])
+if has_trace:
+    # pass the directory, not a pre-resolved file: components.py reads
+    # meta.txt from it (for MODEL provenance), and _lib.load_trace resolves
+    # the actual trace file from a directory just as well as from a path.
+    section("top kernels", [sys.executable, os.path.join(root, "profile", "analyze.py"), trace_dir])
+    section("phases (prefill/decode)", [sys.executable, os.path.join(root, "profile", "phases.py"), trace_dir])
+    section("components (attention/mlp/norm/quant)", [sys.executable, os.path.join(root, "profile", "components.py"), trace_dir])
 else:
     print(f"(no *.pt.trace.json.gz under profile/results/{label}/ - skipping trace analysis)", flush=True)
