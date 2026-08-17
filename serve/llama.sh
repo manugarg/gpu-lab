@@ -7,7 +7,11 @@ source "$(dirname "$0")/../env/env.sh"
 
 PORT="${LLAMA_PORT:-8080}"
 HOST="${LLAMA_HOST:-127.0.0.1}"
-CTX="${LLAMA_CTX:-262144}"
+# 229376 rather than the model's full 262144: MTP below needs ~1 GiB for
+# its draft context, and 262144 + MTP OOMs. Measured trade — 2.4x decode
+# speed for 13% less context. LLAMA_SPEC=none LLAMA_CTX=262144 reverses it.
+CTX="${LLAMA_CTX:-229376}"
+SPEC="${LLAMA_SPEC:-draft-mtp}"
 
 [ -x "$LLAMA_BIN" ] || { echo "no llama-server at $LLAMA_BIN (build it: see serve/README.md)" >&2; exit 1; }
 
@@ -45,6 +49,12 @@ if [ -n "${LLAMA_SSL_CERT:-}" ] || [ -n "${LLAMA_SSL_KEY:-}" ]; then
   tls=(--ssl-cert-file "$LLAMA_SSL_CERT" --ssl-key-file "$LLAMA_SSL_KEY")
 fi
 
+# Speculative decoding via the model's built-in MTP head. Lossless -
+# verification guarantees the same output the target model would produce -
+# so this is pure speed. LLAMA_SPEC=none to disable.
+spec=()
+[ "$SPEC" != "none" ] && spec=(--spec-type "$SPEC")
+
 exec "$LLAMA_BIN" \
   -m "$GGUF" \
   --alias "${LLAMA_ALIAS:-qwen3.8-27b}" \
@@ -52,6 +62,7 @@ exec "$LLAMA_BIN" \
   -c "$CTX" \
   -fa on \
   -ctk q8_0 -ctv q8_0 \
+  "${spec[@]}" \
   --host "$HOST" --port "$PORT" \
   "${tls[@]}" \
   "$@"

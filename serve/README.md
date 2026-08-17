@@ -6,9 +6,10 @@ GPU already has memory in use.
 
 - `serve.sh` — vLLM, port 8000. Faster prefill (~3.8x), much better under
   concurrency. Use for benchmarking and anything multi-user.
-- `llama.sh` — llama.cpp, port 8080. Reaches the full 262K context with
-  this GGUF, lower footprint, single binary. Use for private/interactive
-  single-user work.
+- `llama.sh` — llama.cpp, port 8080. ~154 tok/s single-stream with MTP
+  speculative decoding, 224K context, lower footprint, single binary.
+  Use for private/interactive single-user work. (Can reach the full 262K
+  instead, at 2.4x lower speed — see `--spec-type` below.)
 
 Measured comparison behind those claims: `notes/llamacpp-vs-vllm.md`.
 
@@ -23,7 +24,8 @@ often, so re-check rather than copying from blog posts.
 | `-m <gguf>` | The model file. Resolved through the HF cache by repo/filename so a re-download (new snapshot hash) doesn't break the script. |
 | `--alias qwen3.8-27b` | The model name the API reports. Without it clients see the full filesystem path. |
 | `-ngl 99` | Offload *all* layers to GPU. "99" is the idiom for "more layers than the model has" — anything left on CPU tanks generation speed. |
-| `-c 262144` | Context size. This model's full native window. Verified to fit **only** with quantized KV below. |
+| `-c 229376` | Context size — 224K, not the full 262144. MTP below needs ~1 GiB for its draft context and 262144 + MTP OOMs. Measured trade: 2.4x decode speed for 13% less context. `LLAMA_SPEC=none LLAMA_CTX=262144` reverses it. |
+| `--spec-type draft-mtp` | Speculative decoding using the model's built-in MTP head — **measured 64.4 -> 154.1 tok/s (2.4x)** with 86-88% draft acceptance. Lossless: verification guarantees the same output the model would have produced, so this is pure speed, not a quality trade. No separate draft model needed; the head ships in the GGUF (`qwen35.nextn_predict_layers`). `LLAMA_SPEC=none` disables. |
 | `-fa on` | Flash attention. Required for quantized V cache; also cuts attention memory. Default is `auto`, which won't reliably give you it. |
 | `-ctk q8_0 -ctv q8_0` | Quantize the KV cache to 8-bit. **Not optional at 262K.** llama.cpp's default f16 KV is 64 KB/token, so 262K wants a 16 GiB allocation and OOMs outright. q8_0 halves that to ~8 GiB and fits (28.7 GiB of 32.1 GiB total). |
 | `--host` | `0.0.0.0` by default here (see "Remote access"), so LAN machines can reach it. `LLAMA_HOST=127.0.0.1` for local-only. |
@@ -72,6 +74,45 @@ of 28):
 Server-wide equivalents exist too — `--reasoning off`, or
 `--reasoning-budget N` to cap thinking length — see `llama-server --help`.
 Left unset in `llama.sh` so callers decide per request.
+
+### Reasoning *effort* is separate from reasoning on/off
+
+The chat template defaults to the **highest** setting:
+
+```jinja
+{%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}
+```
+
+Override per request (verified against `/apply-template` — the rendered
+prompt really does change):
+
+```json
+{"chat_template_kwargs": {"reasoning_effort": "low"}}
+```
+
+This template accepts **only** `xhigh`, `medium`, `low`. It maps `high`
+-> `xhigh` and raises on anything else, so `llama-server --help`'s
+advertised `minimal` / `max` will error with this model. `medium` emits
+no effort instruction at all (the model's natural behaviour).
+
+Note for API clients: a `"reasoning": true` capability flag (opencode's,
+for instance) only says "this model emits thinking, parse it separately".
+It does not set effort — effort is decided model-side by the template
+from `reasoning_effort`.
+
+## Seeing what a client actually sends
+
+`serve/logproxy.py` is a logging reverse proxy for when a client's docs
+don't tell you which parameters it emits:
+
+```
+python3 serve/logproxy.py          # :8081 -> :8080
+```
+
+Point the client's baseURL at `http://127.0.0.1:8081/v1`, send one
+message, and it prints the request body (messages elided) plus whether
+`chat_template_kwargs` / `reasoning*` appear. Streaming passes through
+unbuffered, so the client keeps working while you watch.
 
 ## Remote access
 
@@ -189,9 +230,10 @@ All read from `env/env.sh`, all overridable per-invocation:
 | `LLAMA_GGUF_REPO` | `models--unsloth--Qwen3.8-27B-GGUF` |
 | `LLAMA_GGUF_FILE` | `Qwen3.8-27B-UD-Q5_K_XL.gguf` |
 | `LLAMA_GGUF` | (resolved from the two above; set to bypass) |
-| `LLAMA_CTX` | `262144` |
+| `LLAMA_CTX` | `229376` (224K; see `--spec-type`) |
 | `LLAMA_HOST` / `LLAMA_PORT` | `0.0.0.0` / `8080` |
 | `LLAMA_ALIAS` | `qwen3.8-27b` |
+| `LLAMA_SPEC` | `draft-mtp` (`none` disables speculative decoding) |
 | `LLAMA_SSL_CERT` / `LLAMA_SSL_KEY` | unset (TLS off; set both or neither) |
 
 Smaller context to free VRAM for something else:
