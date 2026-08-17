@@ -22,12 +22,20 @@ Then, with `SSH_AUTH_SOCK` set (see CLAUDE.md — a global
 clones through SSH):
 
 ```
+sudo apt install -y libssl-dev   # else you silently get a no-HTTPS binary
 git clone --depth 1 https://github.com/ggml-org/llama.cpp ~/tools/llama.cpp
 cd ~/tools/llama.cpp
 cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc
+      -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc -DLLAMA_OPENSSL=ON
 cmake --build build --config Release -j $(nproc)
 ```
+
+`libssl-dev` matters more than it looks: without the headers, configure
+prints one `OpenSSL not found, HTTPS support disabled` warning amid
+hundreds of lines and builds a binary with **no** `--ssl-cert-file` /
+`--ssl-key-file` flags at all. `LLAMA_OPENSSL=ON` was already set in that
+build — the flag being on proves nothing. Check the artifact instead:
+`ldd build/bin/llama-server | grep ssl` should show `libssl.so.3`.
 
 **The `-DCMAKE_CUDA_COMPILER` pin is mandatory** — see CLAUDE.md's
 "Build hazards". Without it the build dies with a `sm_52` ptxas error
@@ -48,7 +56,7 @@ first for any new model family): `GGML_OP_GATED_DELTA_NET` in
 
 | | llama.cpp (UD-Q5_K_XL) | vLLM (NVFP4) |
 |---|---|---|
-| decode | 69.98 ± 0.32 tok/s | ~68.1 tok/s (TPOT 14.69 ms) |
+| decode | 69.98 ± 0.32 tok/s (**154.1 with MTP** — see below) | ~68.1 tok/s (TPOT 14.69 ms) |
 | prefill | 2211.69 ± 0.93 tok/s (~463 ms) | ~8390 tok/s (TTFT 122 ms) |
 | weights on GPU | 18.82 GiB | 21.34 GiB |
 
@@ -73,6 +81,41 @@ vllm bench serve --model <model> --dataset-name random \
 Note vLLM's headline "Output token throughput" (66.17 tok/s) folds TTFT
 into wall time; the decode row above uses TPOT so it's comparable to
 llama-bench's pure `tg256`.
+
+## MTP speculative decoding: 2.4x, measured 2026-08-16
+
+Prompted by simonwillison.net/2026/Aug/16/qwen-38-27b/, which reported
+~72% from MTP. We were running with none (`--spec-type` defaults to
+`none`). Measured here on two code-generation prompts, thinking disabled
+so output length is stable and this measures decode speed rather than
+reasoning variance:
+
+| | tok/s |
+|---|---|
+| baseline (no speculation) | 64.4 |
+| `--spec-type draft-mtp` | **154.1** |
+
+**2.4x**, better than the post's ~72%. The reason is visible in the
+server's own stats: **86-88% draft acceptance, mean 3.6 tokens accepted
+per draft.**
+
+Why it works: decode is memory-bandwidth-bound (see
+`inference-anatomy.md`) — producing one token means reading ~19 GB of
+weights while the arithmetic units idle. Speculation drafts N tokens
+cheaply and verifies all N in one forward pass; since the weight read
+dominates, verifying 4 costs barely more than verifying 1. MTP supplies
+the draft from a head trained into the model itself
+(`mtp_num_hidden_layers: 1` against 64 real layers, sharing embeddings)
+rather than a separate draft model, so there's no second set of weights
+to load. It is **lossless** — verification guarantees the same output
+the target model would have produced, so this is speed with no quality
+trade, unlike quantization.
+
+Cost: the draft context needs ~1 GiB, and **262144 + MTP OOMs**. The
+largest context that fits alongside it is **229376** (31.4 GiB of
+32.1 GiB), which is what `serve/llama.sh` now defaults to. Speed is
+unchanged at that context (154.1 tok/s), so the trade is 13% context for
+2.4x throughput.
 
 ## Maximum context
 
