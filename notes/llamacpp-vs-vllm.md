@@ -340,8 +340,11 @@ NVFP4 through CUTLASS tensor-core GEMMs (confirmed earlier —
 That's the part visible at 1024 tokens as 3.8x, before the linear-
 attention layers dominate.
 
-Whether the NVFP4 checkpoint is also *worse* is untested — see
-`perplexity.md` for how to settle that.
+**Quality settled (2026-08-17):** perplexity on 4,608 tokens of real
+source, using llama-perplexity's protocol on both sides — llama.cpp
+`UD-Q5_K_XL` **2.2542 ± 0.0876** vs vLLM `NVFP4` **2.2832**. That's
++1.29% against a ±3.9% error bar: statistically indistinguishable. The
+speed win costs nothing measurable in quality. See `perplexity.md`.
 
 **Costs:** vLLM tops out at 189,728 context with this NVFP4 checkpoint
 vs llama.cpp's 262,144, it's a different quantization (so not

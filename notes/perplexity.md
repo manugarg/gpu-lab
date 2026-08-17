@@ -111,6 +111,54 @@ outputs. Less rigorous, closer to the thing you care about. The two are
 complementary — perplexity says whether the weights got worse, the diff
 says whether it shows.
 
+## 7. Result (2026-08-17)
+
+Scored 4,608 tokens of real source code (this repo's Python plus
+llama.cpp CUDA), using **llama-perplexity's protocol on both sides**:
+512-token chunks, scoring only the second half of each so every scored
+token has >=256 tokens of context.
+
+| | perplexity |
+|---|---|
+| llama.cpp `UD-Q5_K_XL` (18.82 GiB) | **2.2542** +/- 0.0876 |
+| vLLM `NVFP4` (21.34 GiB) | **2.2832** |
+
+**+1.29% for NVFP4, against llama.cpp's own +/-3.9% error bar — the two
+are statistically indistinguishable.** Take the speed; quality is not a
+deciding factor between these two quantizations.
+
+### Getting the protocols to match was the whole job
+
+A first attempt gave vLLM 2.5024 against llama.cpp's 2.2542 — an
+apparent 11% gap that was **pure methodology**. `llama-perplexity`
+scores only the second half of each chunk; I had scored every token,
+including early ones with almost no context, which are much harder to
+predict. Same model, same text, same engine — different protocol,
+different answer.
+
+To match it: pull token ids from vLLM's `/tokenize`, send them as the
+prompt (`/v1/completions` accepts a token-id list, guaranteeing
+identical tokenization), and average `prompt_logprobs` over positions
+`n_ctx/2 .. n_ctx` only.
+
+### llama.cpp cannot do this over the API
+
+Its `/v1/completions` and native `/completion` both return logprobs for
+**generated** tokens only — `echo: true` echoes the completion, not the
+prompt. The `logprobs.content` array had exactly one entry. Use the
+`llama-perplexity` binary instead; there is no server-side route.
+
+### Practical trap
+
+`prompt_logprobs` materialises logprobs across the full 248,320-token
+vocabulary for every prompt position — roughly **4.3 GB for 4,300
+tokens**. On a GPU at 94% utilisation it OOMs and **kills the engine**,
+surfacing as `EngineDeadError` and a 500. Serve with low
+`--gpu-memory-utilization` (0.80 worked; 0.72 was too low to fit the KV
+cache at all) and score in bounded chunks.
+
+## 8. Caveats on the above
+
 ## 7. Open here
 
 Not yet run for `unsloth/Qwen3.8-27B-NVFP4` (vLLM, 21.34 GiB) vs
