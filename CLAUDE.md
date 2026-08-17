@@ -35,6 +35,14 @@ which all source env/env.sh:
   this label) plus top kernels, prefill/decode split, and the
   attention/mlp/norm/quant split (if `profile/capture.sh` was). See
   profile/README.md for what each piece does individually.
+- `serve/vllm-qwen38.sh` — vLLM serving Qwen3.8-27B with the flags that
+  model actually needs. This is the current daily driver; see
+  serve/README.md, where each flag is documented by what breaks without
+  it.
+- `serve/llama.sh` — llama.cpp equivalent, port 8080.
+- `serve/monitor.sh` — read-only live view of throughput and GPU state.
+- `serve/logproxy.py` — logs what a client actually sends, for when a
+  client's docs don't say.
 
 ## Build hazards
 - There are seven nvcc binaries on this box, including /usr/bin/nvcc
@@ -92,6 +100,44 @@ which all source env/env.sh:
   assorted FlashInfer SM120 MoE correctness bugs) — irrelevant to
   dense models but don't generalize the dense finding to MoE.
 
-## Baseline
+## Current deployment (2026-08-17)
+
+Qwen3.8-27B served by **vLLM** on :8000 via `serve/vllm-qwen38.sh`,
+driving opencode. Chosen on measurement, not preference:
+
+| | llama.cpp | vLLM |
+|---|---|---|
+| same PR review, wall clock | ~20 min | **4 min** |
+| prefill @50K context | ~165 tok/s | **6,713 tok/s** |
+| perplexity (matched protocol) | 2.2542 +/- 0.0876 | 2.2832 |
+
+The quality difference is +1.29% against a +/-3.9% error bar — nothing.
+The speed difference is ~4x end to end.
+
+Things that cost real time to learn, all in notes/ and serve/README.md:
+
+- vLLM's prefill advantage on *this* model is mostly one unchunked
+  llama.cpp kernel (`gated_delta_net.cu:180` says so in a TODO) covering
+  48 of 64 layers. Don't generalise it to dense models.
+- **Measurement context invalidates most published numbers**, including
+  several of mine. MTP is 2.07x at 26 tokens and 1.06x at 50K; f16 KV is
+  the fastest choice at trivial context and 3.7x the slowest at 50K.
+  Always state the context length a number was taken at.
+- Prefix caching dominates agentic workloads (93% hit rate, TTFT 0.38s)
+  and was **off** by default in vLLM.
+- Restarting a server wipes its KV cache, so the next turn re-prefills
+  everything. Don't restart mid-session and then time the next turn.
+
+Keep `opencode.json`'s `limit.context` equal to the server's actual
+`--max-model-len` (currently 81920, reduced from 131072 because MTP's
+draft model needs the KV). vLLM **rejects** over-length requests rather
+than truncating.
+
+## Baseline (Qwen3-14B-FP8)
 Qwen3-14B-FP8, 1024/256, rate 4: 1011 tok/s out, TPOT 15.9ms,
 TTFT 110ms mean. Any change regresses against this.
+
+This is the *14B* baseline, used by `bench/run.sh` and `report.py`.
+Qwen3.8-27B is a different model with its own numbers — see
+"Current deployment" above and notes/llamacpp-vs-vllm.md. Don't compare
+across the two.
