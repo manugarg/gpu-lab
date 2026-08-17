@@ -114,6 +114,34 @@ message, and it prints the request body (messages elided) plus whether
 `chat_template_kwargs` / `reasoning*` appear. Streaming passes through
 unbuffered, so the client keeps working while you watch.
 
+**What it settled for opencode** (v1.18.18): per-model `options` *are*
+forwarded verbatim into the request body, flattened at top level — not
+dropped, not nested under `providerOptions`. Its docs don't say this;
+the proxy showed it:
+
+```json
+{"model": "qwen3.8-27b-low", "max_tokens": 16384, "temperature": 0.55,
+ "chat_template_kwargs": {"reasoning_effort": "low"}, "stream": true,
+ "tools": [...]}
+```
+
+So reasoning effort can be exposed as *model presets* — one entry per
+effort level, all pointing at the same server, switched from opencode's
+model picker:
+
+```json
+"models": {
+  "qwen3.8-27b":        { "name": "Qwen3.8-27B (xhigh, default)", ... },
+  "qwen3.8-27b-medium": { ..., "options": {"chat_template_kwargs": {"reasoning_effort": "medium"}} },
+  "qwen3.8-27b-low":    { ..., "options": {"chat_template_kwargs": {"reasoning_effort": "low"}} }
+}
+```
+
+The made-up model IDs are fine: llama-server ignores the requested model
+name and serves whatever is loaded (verified — returns 200 and echoes
+back `"model": "qwen3.8-27b"`). Set `limit.context` to the server's
+actual `-c` value, not the model's theoretical maximum.
+
 ## Remote access
 
 Binds to `0.0.0.0` by default (set in `env/env.sh`), so other machines
