@@ -4,14 +4,73 @@ Two engines, one GPU. They can't run at the same time — 27B weights plus
 KV cache fills the card either way, so `llama.sh` refuses to start if the
 GPU already has memory in use.
 
-- `serve.sh` — vLLM, port 8000. Faster prefill (~3.8x), much better under
-  concurrency. Use for benchmarking and anything multi-user.
-- `llama.sh` — llama.cpp, port 8080. ~154 tok/s single-stream with MTP
-  speculative decoding, 224K context, lower footprint, single binary.
-  Use for private/interactive single-user work. (Can reach the full 262K
-  instead, at 2.4x lower speed — see `--spec-type` below.)
+- `serve.sh` — vLLM, port 8000. **Prefills 15-40x faster than llama.cpp
+  at long context and barely degrades** (8,333 tok/s at 16K, 6,713 at
+  50K), and holds decode nearly flat. For agentic coding — long contexts,
+  prefill-dominated — this is the one to use.
+- `llama.sh` — llama.cpp, port 8080. Reaches 262K context (vs vLLM's
+  189K here) and is operationally simpler — one binary, no venv. But its
+  prefill collapses with context (567 tok/s at 16K, ~165 at 50K), so a
+  68K-token prefill costs ~7 minutes against vLLM's ~10 seconds. Prefer
+  it only for short contexts or when you need the extra context ceiling.
 
 Measured comparison behind those claims: `notes/llamacpp-vs-vllm.md`.
+
+## vLLM for Qwen3.8-27B (`vllm-qwen38.sh`)
+
+```
+./serve/vllm-qwen38.sh            # MTP on, 82K context
+VLLM_SPEC=0 ./serve/vllm-qwen38.sh   # MTP off, 131K context
+```
+
+Every flag below was needed because leaving it out fails in a way that
+does *not* look like a missing flag. That's the reason this is a script
+and not a line in a README.
+
+| flag | what breaks without it |
+|---|---|
+| `--reasoning-parser qwen3` | Thinking is emitted into `content`. Your first reply is literally `"We need answer user's simple math..."` — it looks like the model is broken, not like a config gap. |
+| `--enable-auto-tool-choice` + `--tool-call-parser qwen3_xml` | Any request with `tools` returns **400**: *"auto tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"*. The parser must be `qwen3_xml`, **not** the more common `hermes` — this model's template emits `<function=name><parameter=key>` XML, not hermes-style JSON. Check the template, don't guess. |
+| `--served-model-name qwen3.8-27b …` | vLLM **validates** model names and 404s on unknown ones, where llama.cpp silently serves whatever is loaded. Without aliases the opencode effort presets (`-low`, `-medium`) break. |
+| `--enable-prefix-caching` | It was **off** in our first runs. With it, a real session hit **80-93%** cache and mean TTFT of 0.4-1.3s; without it every turn re-prefills the whole history. Single biggest win for agentic use. |
+| `--max-num-seqs 4` | vLLM's default drives CUDA-graph capture to a batch size that OOMs at load on 32 GB. The error points at the KV cache, not at concurrency. |
+| `--kv-cache-dtype fp8_e4m3` | Halves KV, which matters because decode cost scales with KV read. |
+| `--max-model-len` | See the MTP tradeoff below. |
+
+### The MTP tradeoff
+
+`--speculative-config '{"method":"mtp","num_speculative_tokens":3}'` uses
+the model's built-in draft head:
+
+| | MTP off | MTP on |
+|---|---|---|
+| decode | 63.8 tok/s | **126.4 tok/s** (2x) |
+| draft acceptance | — | 83% synthetic, **71% real workload** |
+| max context | **131,072** | 81,920 |
+| PR review wall clock | 5 min | **4 min** (1.25x) |
+| tool calling | works | works |
+
+Raw decode doubles but wall clock only improves ~1.25x, because decode
+isn't all of the wall time once tool execution, prefill and idle between
+turns are counted. Don't expect the 2x to show up end-to-end.
+
+**131072 + MTP does not start** — the draft model needs ~5 GiB of the KV
+budget and vLLM refuses with a `ValueError` naming the shortfall. Hence
+the context default following `VLLM_SPEC`.
+
+Note vLLM **rejects** a request that exceeds `--max-model-len` rather
+than truncating it, so 82K is a hard ceiling, not a soft one.
+
+Also logged at startup and worth knowing: `CUDAGraphMode.FULL_AND_PIECEWISE
+is not supported with spec-decode for FlashInferBackend`, so it falls back
+to a narrower graph mode. There may be more performance available with a
+different attention backend — untested.
+
+### Field-name difference from llama.cpp
+
+vLLM returns reasoning in **`reasoning`**; llama.cpp uses
+**`reasoning_content`**. `content` is clean on both, so nothing breaks,
+but a client that reads one name won't render the other's thinking.
 
 ## `llama.sh` flags
 
@@ -24,10 +83,10 @@ often, so re-check rather than copying from blog posts.
 | `-m <gguf>` | The model file. Resolved through the HF cache by repo/filename so a re-download (new snapshot hash) doesn't break the script. |
 | `--alias qwen3.8-27b` | The model name the API reports. Without it clients see the full filesystem path. |
 | `-ngl 99` | Offload *all* layers to GPU. "99" is the idiom for "more layers than the model has" — anything left on CPU tanks generation speed. |
-| `-c 229376` | Context size — 224K, not the full 262144. MTP below needs ~1 GiB for its draft context and 262144 + MTP OOMs. Measured trade: 2.4x decode speed for 13% less context. `LLAMA_SPEC=none LLAMA_CTX=262144` reverses it. |
-| `--spec-type draft-mtp` | Speculative decoding using the model's built-in MTP head — **measured 64.4 -> 154.1 tok/s (2.4x)** with 86-88% draft acceptance. Lossless: verification guarantees the same output the model would have produced, so this is pure speed, not a quality trade. No separate draft model needed; the head ships in the GGUF (`qwen35.nextn_predict_layers`). `LLAMA_SPEC=none` disables. |
+| `-c 229376` | Context size. With MTP off this could go to 262144; left here so enabling MTP doesn't OOM. Note prefill gets slower the deeper the context, so bigger isn't free — see the prefill section in `notes/llamacpp-vs-vllm.md`. |
+| `--spec-type draft-mtp` | Speculative decoding via the model's built-in MTP head. Lossless, so speed-only. **Its benefit decays with context**: measured 2.07x at ~26 tokens, 1.31x at 16K, 1.06x at 50K. Worth enabling below ~16K, not above ~30K — at long context KV attention dominates and there's little left to amortise. Costs 3.3 GiB and caps context at 229376, so it defaults to `none`; `LLAMA_SPEC=draft-mtp` enables it. |
 | `-fa on` | Flash attention. Required for quantized V cache; also cuts attention memory. Default is `auto`, which won't reliably give you it. |
-| `-ctk q8_0 -ctv q8_0` | Quantize the KV cache to 8-bit. **Not optional at 262K.** llama.cpp's default f16 KV is 64 KB/token, so 262K wants a 16 GiB allocation and OOMs outright. q8_0 halves that to ~8 GiB and fits (28.7 GiB of 32.1 GiB total). |
+| `-ctk q8_0 -ctv q8_0` | Quantize the KV cache to 8-bit. **Not optional**, for two reasons. Memory: f16 KV is 64 KB/token, so 262K wants a 16 GiB allocation and OOMs. Speed: f16 is **2.3x slower at 16K and 3.7x slower at 50K** (decode is bandwidth-bound, KV size dominates). `q4_0` was measured too — it buys ~1 GiB but no speed over q8_0, so q8_0 is the right stop. |
 | `--host` | `0.0.0.0` by default here (see "Remote access"), so LAN machines can reach it. `LLAMA_HOST=127.0.0.1` for local-only. |
 | `--port 8080` | llama.cpp's default; deliberately not vLLM's 8000, so the port check distinguishes the two. |
 
@@ -142,6 +201,44 @@ name and serves whatever is loaded (verified — returns 200 and echoes
 back `"model": "qwen3.8-27b"`). Set `limit.context` to the server's
 actual `-c` value, not the model's theoretical maximum.
 
+## Watching it run
+
+`serve/monitor.sh` — live view, read-only (HTTP GETs + `nvidia-smi`, it
+never touches the running server):
+
+```
+./serve/monitor.sh
+LLAMA_LOG=/path/to/server.log ./serve/monitor.sh
+```
+
+```
+server:  UP
+slots:   1/4 processing   n_ctx=229,376  speculative=True
+gpu:     98% util  30.7/31.8 GiB  216.80W  54°C  throttle=none
+prefill: [##########....................]  34%  23,000/68,000 tok
+         92 tok/s   elapsed 250s   eta ~489s
+decode:  14.9 tok/s overall   14.3 tok/s last-3s   (1,970 generated)
+mtp:     79% accepted  (71/90)  mean draft len 3.37
+```
+
+Where each number comes from:
+
+| panel | source | notes |
+|---|---|---|
+| slots | `/slots` | `is_processing` is the authoritative "is the GPU busy" flag. There is no `state` field — guessing at one is how I once concluded the GPU was idle while opencode was hammering it. |
+| gpu | `nvidia-smi` | Watch **power**: prefill should be compute-bound and pull high wattage. ~150W on a ~575W card means the GPU is stalling, not computing. |
+| prefill / decode / mtp | server **stdout** | Only present if stdout was captured. Under systemd: `journalctl --user -u llama -f > /tmp/llama.log &` then point `LLAMA_LOG` at it. |
+
+`tg` vs `tg_3s` is the useful pair — lifetime average versus the last
+three seconds, so you can watch decode degrade *within* one response.
+
+Low MTP acceptance is called out explicitly: below ~50% speculation is
+likely costing more than it saves, and `LLAMA_SPEC=none` is worth trying.
+
+`/metrics` (Prometheus) is enabled by default via `LLAMA_METRICS`, for
+scraping into Grafana later. It returns **501** on a server started
+without it — that's "not enabled", not "broken".
+
 ## Remote access
 
 Binds to `0.0.0.0` by default (set in `env/env.sh`), so other machines
@@ -248,6 +345,28 @@ vLLM, since the guard exits non-zero. That's intentional — it recovers on
 its own once the GPU frees up — but it's why `RestartSec` is 10 rather
 than 1.
 
+### Restarting
+
+`kill` then immediately re-run does **not** work naively: after SIGTERM
+the port stays bound and 21 GB of weights take several seconds to
+release. The script waits up to `LLAMA_WAIT` (60s) for both to clear
+before starting, so a restart is just:
+
+```
+pkill -f '[l]lama-server'; ./serve/llama.sh
+```
+
+(Use the `[l]` bracket form — a plain `pkill -f llama-server` also
+matches the shell running it and kills your own command.)
+
+The wait only applies to a *transient* state. A server actually
+answering `/health` still fails immediately with `server already on
+:PORT`, rather than waiting 60s for something that isn't going away.
+
+This exists because the naive version bit us: a restart raced the
+shutdown, the guard correctly refused to double-start, the old server
+then finished exiting, and the box was left with nothing serving.
+
 ## Overrides
 
 All read from `env/env.sh`, all overridable per-invocation:
@@ -262,6 +381,8 @@ All read from `env/env.sh`, all overridable per-invocation:
 | `LLAMA_HOST` / `LLAMA_PORT` | `0.0.0.0` / `8080` |
 | `LLAMA_ALIAS` | `qwen3.8-27b` |
 | `LLAMA_SPEC` | `draft-mtp` (`none` disables speculative decoding) |
+| `LLAMA_WAIT` | `60` — seconds to wait for the port/GPU to free on restart |
+| `LLAMA_METRICS` | `1` — Prometheus `/metrics` endpoint; `0` disables |
 | `LLAMA_SSL_CERT` / `LLAMA_SSL_KEY` | unset (TLS off; set both or neither) |
 
 Smaller context to free VRAM for something else:
