@@ -121,10 +121,52 @@ So "tokens per second" is not a property of a model-plus-GPU. It's a
 property of a model, a GPU, *and where you are in the conversation* —
 and that third variable is missing from most published figures.
 
-## The 40x is one kernel, not an engine verdict
+## The 40x is two mechanisms, not an engine verdict
 
-The vLLM prefill advantage looked implausible, so I went looking for a
-mechanism. It's in llama.cpp's own source, at
+A 40x gap looked implausible, so I went looking for causes. There are
+two, and they behave very differently — one is specific to this model
+and will expire, the other is general.
+
+**Cause 1: vLLM is using the tensor cores; llama.cpp isn't.**
+
+Prefill is compute-bound — that's what makes it fast when it's fast — so
+the quality of the matrix-multiply kernel dominates. The two engines take
+very different paths there:
+
+- llama.cpp runs **Q5_K**, a k-quant that must be dequantized into
+  fairly generic CUDA kernels before the multiply.
+- vLLM runs **NVFP4** through **CUTLASS tensor-core GEMMs**. I confirmed
+  this rather than assuming it — vLLM picks
+  `FlashInferCutlassNvFp4LinearKernel` on this card, and in the profiler
+  trace mangled `cutlass::device_kernel` symbols account for ~73% of GPU
+  time.
+
+You can see the difference in the power meter. Same GPU, same phase,
+same model:
+
+```
+prefill power draw       peak    sustained
+-----------------------------------------
+llama.cpp                344 W       ~160 W
+vLLM                     596 W        540 W
+```
+
+On a card rated ~575 W, llama.cpp's prefill draws about **28% of budget**
+while reporting "100% GPU utilization" — that metric only means a kernel
+is resident, not that the silicon is busy. vLLM pulls **3.4x the power**
+to do the same work faster, which is what actually using the tensor cores
+looks like.
+
+Power draw turned out to be the single most useful diagnostic in this
+whole exercise. Utilization percentages lie; watts don't.
+
+This cause is **general**. It has nothing to do with hybrid attention and
+would apply to a dense model too. It's the part visible at 1024 tokens as
+a 3.8x gap, before anything else dominates.
+
+**Cause 2: one unfinished kernel, which is where the other 10x lives.**
+
+The rest is in llama.cpp's own source, at
 `ggml/src/ggml-cuda/gated_delta_net.cu:180`:
 
 ```c
@@ -136,14 +178,19 @@ Gated DeltaNet (linear attention), and llama.cpp's CUDA kernel for them
 is unchunked — it walks prefill sequentially where a chunked
 implementation goes parallel.
 
-So this isn't "vLLM is 40x faster than llama.cpp." It's "llama.cpp
-hasn't optimized prefill for hybrid linear-attention models yet, and
-this model is 75% such layers." It shouldn't be generalized to dense
-models, and it has an expiry date — the day that TODO lands.
+That's why the gap is 3.8x at 1024 tokens and 40x at 50K. The kernel
+quality difference is roughly constant; the unchunked linear-attention
+path gets worse the more tokens you feed it.
 
-This is the shape of most large engine gaps, in my experience: not
-craftsmanship, but one unfinished code path that happens to sit on your
-critical path.
+So: **not** "vLLM is 40x faster than llama.cpp." A few times faster
+because of tensor-core GEMM kernels, which generalizes — and then a
+further order of magnitude because 75% of this particular model's layers
+hit an explicitly unfinished code path, which does not generalize and has
+an expiry date.
+
+Worth separating those before quoting either. The first is a reason to
+prefer vLLM for quantized inference on Blackwell generally. The second is
+a reason to re-benchmark after llama.cpp's next release.
 
 ## Does the faster engine cost quality?
 

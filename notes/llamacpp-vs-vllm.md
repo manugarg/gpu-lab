@@ -317,6 +317,21 @@ since its response folds both together.
 **Concretely:** the 67,907-token prefill that took **7.25 minutes** on
 llama.cpp would take roughly **10 seconds** on vLLM.
 
+**Power draw makes the mechanism visible** (measured 2026-08-18, 50K-token
+prefill, sampled at 0.2s):
+
+```
+                 peak     sustained
+llama.cpp        344 W       ~160 W
+vLLM             596 W        540 W
+```
+
+Same GPU, same phase, ~3.4x the power. On a ~575 W card, llama.cpp
+prefill runs at ~28% of budget while nvidia-smi reports 100%
+"utilization" — that field only means a kernel is resident. This is the
+clearest single signal that one engine is on the tensor cores and the
+other is stalling on memory.
+
 **Why — and this bounds the claim.** llama.cpp's CUDA kernel for Gated
 DeltaNet says so itself, at `ggml/src/ggml-cuda/gated_delta_net.cu:180`:
 
