@@ -1,6 +1,6 @@
 # Same model, same GPU, 5x different: what I learned benchmarking Qwen3.8-27B
 
-*Draft. All numbers measured on one RTX 5090 (32 GB, sm_120) running
+*Medium version — tables are code blocks. All numbers measured on one RTX 5090 (32 GB, sm_120) running
 Qwen3.8-27B. Nothing here is quoted from someone else's benchmark
 without being re-run.*
 
@@ -20,19 +20,23 @@ correct and doesn't transfer.
 
 Same PR review, same machine, same model weights family:
 
-| setup | wall clock |
-|---|---|
-| llama.cpp, `UD-Q5_K_XL` | **~20 min** |
-| vLLM, `NVFP4` | **5 min** |
-| vLLM + MTP speculative decoding | **4 min** |
+```
+setup                            wall clock
+-------------------------------------------
+llama.cpp, UD-Q5_K_XL               ~20 min
+vLLM, NVFP4                           5 min
+vLLM + MTP speculative decoding       4 min
+```
 
 The gap is almost entirely **prefill** — the phase where the model reads
 your prompt before generating anything (tok/s):
 
-| context | llama.cpp | vLLM |
-|---|---|---|
-| 16K | 567 | 8,333 |
-| 50K | ~165 | 6,713 |
+```
+context  llama.cpp   vLLM
+-------------------------
+16K            567  8,333
+50K           ~165  6,713
+```
 
 For an agentic coding workload this is the whole ballgame. Prefill was
 **63% of wall time** on llama.cpp and about **3%** on vLLM. A 68K-token
@@ -51,11 +55,13 @@ well-run public benchmark I found, says `q4_0` beats `f16` by about 9%.
 
 Here's what I measured (decode, tok/s), varying only context length:
 
-| KV dtype | ~26 tok | 16K | 50K |
-|---|---|---|---|
-| `f16` | 140.4 | 22.1 | 9.4 |
-| `q8_0` | 139.5 | 51.9 | 35.2 |
-| `q4_0` | 138.3 | 51.1 | 34.2 |
+```
+KV dtype  ~26 tok   16K   50K
+-----------------------------
+f16         140.4  22.1   9.4
+q8_0        139.5  51.9  35.2
+q4_0        138.3  51.1  34.2
+```
 
 At trivial context, `f16` is the *fastest* option — nothing to read, no
 dequantization overhead. At 50K it is **3.7x the slowest**. Both
@@ -76,11 +82,13 @@ it and got **2.4x** on decode. I set it as a default.
 
 Then I measured it at the context lengths my actual work uses (tok/s):
 
-| context | MTP off | MTP on | speedup |
-|---|---|---|---|
-| ~26 tok | 66.9 | 138.6 | 2.07x |
-| 16K | 51.9 | 67.8 | 1.31x |
-| 50K | 35.2 | 37.4 | 1.06x |
+```
+context  MTP off  MTP on  speedup
+---------------------------------
+~26 tok     66.9   138.6    2.07x
+16K         51.9    67.8    1.31x
+50K         35.2    37.4    1.06x
+```
 
 My 2.4x was never wrong. It was taken with short prompts and thinking
 disabled — conditions that don't resemble agentic coding at all. By 50K
@@ -146,10 +154,12 @@ pushing most MLP layers to 4-bit.
 
 Perplexity over 4,608 tokens of real source code:
 
-| | perplexity |
-|---|---|
-| llama.cpp `UD-Q5_K_XL` | **2.2542** ± 0.0876 |
-| vLLM `NVFP4` | **2.2832** |
+```
+                           perplexity
+-------------------------------------
+llama.cpp UD-Q5_K_XL  2.2542 ± 0.0876
+vLLM NVFP4                     2.2832
+```
 
 **+1.29% against a ±3.9% error bar.** Statistically indistinguishable.
 The speed is free.
@@ -221,11 +231,13 @@ exactly the operation that destroys the prefix cache.
 barely helps — but 0.15 GiB plus raising `--gpu-memory-utilization` to
 0.95 was exactly enough to fit the full window:
 
-| | n=3 | n=2 |
-|---|---|---|
-| context | 81,920 | 131,072 |
-| decode tok/s | 136 | 132 |
-| draft acceptance | ~71% | 84% |
+```
+                     n=3      n=2
+---------------------------------
+context           81,920  131,072
+decode tok/s         136      132
+draft acceptance    ~71%      84%
+```
 
 60% more context for 3% less decode. I'd assumed the context sacrifice
 was inherent to speculative decoding and never tested a smaller `n`.
