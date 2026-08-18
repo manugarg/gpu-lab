@@ -129,9 +129,14 @@ Things that cost real time to learn, all in notes/ and serve/README.md:
   everything. Don't restart mid-session and then time the next turn.
 
 Keep `opencode.json`'s `limit.context` equal to the server's actual
-`--max-model-len` (currently 81920, reduced from 131072 because MTP's
-draft model needs the KV). vLLM **rejects** over-length requests rather
-than truncating.
+`--max-model-len` (currently **131072**). vLLM **rejects** over-length
+requests rather than truncating.
+
+MTP runs at `num_speculative_tokens: 2` and
+`--gpu-memory-utilization 0.95`, which fits the full window *and* keeps
+~97% of the speedup (132 vs 136 tok/s). n=3 needs 5.03 GiB of KV and
+forces context down to 82K, where opencode starts compacting — and
+compaction rewrites the prefix, which is a full cache miss.
 
 ## Baseline (Qwen3-14B-FP8)
 Qwen3-14B-FP8, 1024/256, rate 4: 1011 tok/s out, TPOT 15.9ms,

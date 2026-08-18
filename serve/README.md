@@ -42,11 +42,11 @@ and not a line in a README.
 `--speculative-config '{"method":"mtp","num_speculative_tokens":3}'` uses
 the model's built-in draft head:
 
-| | MTP off | MTP on |
+| | MTP off | MTP on (n=2) |
 |---|---|---|
-| decode | 63.8 tok/s | **126.4 tok/s** (2x) |
-| draft acceptance | — | 83% synthetic, **71% real workload** |
-| max context | **131,072** | 81,920 |
+| decode | 63.8 tok/s | **132 tok/s** (2x) |
+| draft acceptance | — | **84%** |
+| max context | 131,072 | **131,072** (at util 0.95) |
 | PR review wall clock | 5 min | **4 min** (1.25x) |
 | tool calling | works | works |
 
@@ -54,9 +54,10 @@ Raw decode doubles but wall clock only improves ~1.25x, because decode
 isn't all of the wall time once tool execution, prefill and idle between
 turns are counted. Don't expect the 2x to show up end-to-end.
 
-**131072 + MTP does not start** — the draft model needs ~5 GiB of the KV
-budget and vLLM refuses with a `ValueError` naming the shortfall. Hence
-the context default following `VLLM_SPEC`.
+**131072 + MTP at n=3 does not start** — the draft model needs ~5.03 GiB
+of KV and vLLM refuses with a `ValueError` naming the shortfall. n=2 needs
+4.88 GiB, which fits at `--gpu-memory-utilization 0.95`. That's the
+default now: full context and ~97% of the MTP speedup.
 
 Note vLLM **rejects** a request that exceeds `--max-model-len` rather
 than truncating it, so 82K is a hard ceiling, not a soft one.
