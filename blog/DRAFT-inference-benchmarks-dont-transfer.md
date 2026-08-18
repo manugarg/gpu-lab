@@ -22,9 +22,9 @@ Same PR review, same machine, same model weights family:
 
 | setup | wall clock |
 |---|---|
-| llama.cpp, `UD-Q5_K_XL` | **~20 min** |
-| vLLM, `NVFP4` | **5 min** |
-| vLLM + MTP speculative decoding | **4 min** |
+| llama.cpp `UD-Q5_K_XL` | **~20 min** |
+| vLLM `NVFP4` | **5 min** |
+| vLLM + MTP | **4 min** |
 
 The gap is almost entirely **prefill** — the phase where the model reads
 your prompt before generating anything (tok/s):
@@ -102,10 +102,15 @@ left to save.
 The finding that actually explained my slow sessions:
 
 ```
-25,000 tokens, fresh          393 tok/s
-67,907 tokens, fresh          156 tok/s
-19,051 tokens, appended deep   93 tok/s   <- fewer tokens, half the rate
+prefill        tokens   tok/s
+-----------------------------
+fresh          25,000     393
+fresh          67,907     156
+appended deep  19,051      93
 ```
+
+Read the last two rows together: **fewer tokens, less than two-thirds
+the rate.**
 
 19K tokens appended deep into a conversation prefills *slower per token*
 than 68K from scratch. Cost scales with the KV already present. **Every
@@ -143,10 +148,10 @@ You can see the difference in the power meter. Same GPU, same phase,
 same model:
 
 ```
-prefill power draw       peak    sustained
------------------------------------------
-llama.cpp                344 W       ~160 W
-vLLM                     596 W        540 W
+prefill      peak   sustained
+----------------------------
+llama.cpp   344 W      ~160 W
+vLLM        596 W       540 W
 ```
 
 On a card rated ~575 W, llama.cpp's prefill draws about **28% of budget**
