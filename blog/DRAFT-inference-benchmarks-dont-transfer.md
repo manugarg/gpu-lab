@@ -60,6 +60,11 @@ Here's what I measured (decode, tok/s), varying only context length:
 | `q8_0` | 139.5 | 51.9 | 35.2 |
 | `q4_0` | 138.3 | 51.1 | 34.2 |
 
+![Decode speed for three KV-cache dtypes at three context lengths. All
+three start together near 140 tok/s with an almost empty window; by 50K
+`f16` has fallen to 9.4 while `q8_0` and `q4_0` hold near
+35.](kv-cache-inversion.png)
+
 At trivial context, `f16` is the *fastest* option — nothing to read, no
 dequantization overhead. At 50K it is **3.7x the slowest**. Both
 readings are correct. Neither generalizes.

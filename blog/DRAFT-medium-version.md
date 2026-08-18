@@ -58,6 +58,11 @@ llama.cpp lets you quantize the KV cache. Conventional wisdom, and a
 
 Here's what I measured (decode, tok/s), varying only context length:
 
+<!-- UPLOAD: blog/kv-cache-inversion.png — drop it here, then delete this
+     comment. Medium caption (paste under the image):
+     Same setting, same GPU, same model — measured at three context
+     lengths. Published benchmarks rarely say which one they used. -->
+
 ```
 KV dtype  ~26 tok   16K   50K
 -----------------------------
