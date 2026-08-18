@@ -1,15 +1,15 @@
-# Same model, same GPU, 5x different: what I learned benchmarking Qwen3.8-27B
+# Qwen3.8-27B on one RTX 5090: same model, same GPU, 5x different
 
-*Draft. All numbers measured on one RTX 5090 (32 GB, sm_120) running
-Qwen3.8-27B. Nothing here is quoted from someone else's benchmark
-without being re-run.*
+*All numbers measured on one RTX 5090 (32 GB, consumer Blackwell,
+sm_120). Nothing here is quoted from someone else's benchmark without
+being re-run.*
 
 ---
 
-A PR review through my local coding agent took **20 minutes**. After
-switching inference engines and fixing two defaults, the same review
-takes **4 minutes**. Nothing about the model changed, and — I checked —
-neither did output quality.
+A PR review through my local coding agent — Qwen3.8-27B on a single
+RTX 5090 — took **20 minutes**. After switching inference engines and
+fixing two defaults, the same review takes **4 minutes**. Nothing about
+the model changed, and — I checked — neither did output quality.
 
 That's the useful headline. But the more interesting finding is *why I
 had to measure it myself*: almost every performance number published
