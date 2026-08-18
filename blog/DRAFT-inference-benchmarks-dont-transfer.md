@@ -1,8 +1,8 @@
 # Qwen3.8-27B on one RTX 5090: same model, same GPU, 5x different
 
 *All numbers measured on one RTX 5090 (32 GB, consumer Blackwell,
-sm_120). Nothing here is quoted from someone else's benchmark without
-being re-run.*
+sm_120), working with an AI assistant that ran the experiments. Nothing
+here is quoted from someone else's benchmark without being re-run.*
 
 ---
 
@@ -236,6 +236,11 @@ inputs, then averaging only the second half of each 512-token chunk.
 I want to be specific about this, because a post that only lists
 conclusions is less useful than one that shows which plausible ideas
 died.
+
+Most of these were the assistant's hypotheses. All of them were
+plausible, several were mine, and the only thing that ever separated the
+true ones from the false ones was changing a variable and measuring
+again.
 
 **"Prefill is memory-bound because micro-batches re-stream the weights."**
 The GPU drew ~160 W of a ~575 W budget during prefill, which fit the
