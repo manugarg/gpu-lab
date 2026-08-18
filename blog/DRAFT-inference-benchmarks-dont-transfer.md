@@ -47,7 +47,10 @@ real and it is not what it looks like.
 ### Exhibit A: the same flag is the best and worst choice
 
 llama.cpp lets you quantize the KV cache. Conventional wisdom, and a
-well-run public benchmark I found, says `q4_0` beats `f16` by about 9%.
+[public benchmark of 45 llama.cpp configs][hf112] on the same GPU, says
+`q4_0` beats `f16` by about 9%.
+
+[hf112]: https://huggingface.co/Qwen/Qwen3.8-27B/discussions/112
 
 Here's what I measured (decode, tok/s), varying only context length:
 
@@ -61,12 +64,15 @@ At trivial context, `f16` is the *fastest* option — nothing to read, no
 dequantization overhead. At 50K it is **3.7x the slowest**. Both
 readings are correct. Neither generalizes.
 
-The public benchmark reporting +9% wasn't wrong either. Its absolute
-numbers (125–137 tok/s) land right on mine at short context (138–140),
-which told me its "32K context" was the *allocation*, not a filled
-window — `llama-bench` generates from a tiny prompt. At the context
-length it actually measured, KV dtype barely matters, and +9% is what
-noise looks like.
+That benchmark isn't wrong either. Its absolute numbers (125–137 tok/s)
+land right on mine at short context (138–140), which suggests its "32K
+context" was the `-c` *allocation* rather than a filled window —
+`llama-bench` generates from a tiny prompt. At the context length it
+appears to have measured, KV dtype barely matters, and +9% is close to
+what noise looks like. Its MTP figures independently match mine closely
+(0.674 draft acceptance vs my 68%, 3.11 tokens/step vs 3.19), which is
+what made me trust the setup enough to go looking for why the KV numbers
+diverged.
 
 ### Exhibit B: my own 2.4x evaporated
 
@@ -200,6 +206,14 @@ Perplexity over 4,608 tokens of real source code:
 
 **+1.29% against a ±3.9% error bar.** Statistically indistinguishable.
 The speed is free.
+
+Caveat worth stating plainly: that's **one 4,608-token sample of code**.
+It's enough to rule out a large regression, not enough to detect a small
+one, and perplexity measures next-token prediction rather than whether
+the model writes working code. If you're choosing between these two
+quantizations for something where quality is critical, run your own eval
+on your own text — treat this as "no red flag," not as "proven
+equivalent." 
 
 My first attempt at this said **11%**, which would have read as a real
 regression. That was pure methodology: `llama-perplexity` scores only the
