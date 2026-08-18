@@ -240,6 +240,44 @@ likely costing more than it saves, and `LLAMA_SPEC=none` is worth trying.
 scraping into Grafana later. It returns **501** on a server started
 without it — that's "not enabled", not "broken".
 
+## Running under systemd (installed)
+
+`serve/systemd/vllm-qwen38.service` is installed and enabled. The server
+survives this shell exiting, a `kill -9`, logout, and reboot:
+
+```
+systemctl --user status vllm-qwen38      # state
+systemctl --user restart vllm-qwen38     # after changing the script
+journalctl --user -u vllm-qwen38 -f      # logs
+```
+
+To install from scratch:
+
+```
+cp serve/systemd/vllm-qwen38.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now vllm-qwen38
+loginctl enable-linger $USER             # <- or it won't start until you log in
+```
+
+Verified: `kill -9` on the main PID brought it back (`NRestarts=1`) and
+it served again once loaded.
+
+Details that matter in the unit:
+
+| setting | why |
+|---|---|
+| `TimeoutStartSec=600` | model load plus CUDA-graph capture takes ~2 min; the 90s default would kill it mid-start |
+| `Restart=on-failure` + `RestartSec=10` | the script exits non-zero when the GPU is busy, so retrying is correct — it recovers once the GPU frees. 10s so a persistent conflict doesn't spin |
+| `KillSignal=SIGINT` | vLLM shuts down cleanly on SIGINT |
+| `Conflicts=llama-qwen38.service` | both engines want the whole GPU; never run them together |
+| `loginctl enable-linger` | without it a user service stops at logout and doesn't start at boot |
+
+**Why bother:** before this, the server only lived as long as whatever
+shell started it. Twice that bit us — a server started with a one-hour
+experiment timeout silently died an hour later, and another inherited a
+reduced `LLAMA_CTX` from a cache test. A unit file has no such lifetime.
+
 ## Remote access
 
 Binds to `0.0.0.0` by default (set in `env/env.sh`), so other machines

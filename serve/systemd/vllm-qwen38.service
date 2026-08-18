@@ -1,0 +1,32 @@
+[Unit]
+Description=vLLM serving Qwen3.8-27B (gpu-lab)
+Documentation=file:///home/manugarg/gpu-lab/serve/README.md
+After=network-online.target
+Wants=network-online.target
+# Both engines want the whole GPU; never run them together.
+Conflicts=llama-qwen38.service
+
+[Service]
+Type=simple
+ExecStart=%h/gpu-lab/serve/vllm-qwen38.sh
+WorkingDirectory=%h/gpu-lab
+
+# The script waits for the port/GPU to free and exits non-zero if another
+# server holds them. Retrying is correct: it recovers on its own once the
+# GPU frees. RestartSec is 10 so a persistent conflict doesn't spin.
+Restart=on-failure
+RestartSec=10
+
+# Model load + CUDA graph capture takes ~2 min; don't let systemd give up.
+TimeoutStartSec=600
+TimeoutStopSec=120
+
+# vLLM ignores SIGHUP-style reloads; stop it the way it expects.
+KillSignal=SIGINT
+KillMode=mixed
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
