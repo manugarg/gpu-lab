@@ -64,7 +64,7 @@ are correct; neither generalises. Always state the context length.
 prefills 15-40x faster than llama.cpp *on this model* largely because
 llama.cpp's Gated DeltaNet kernel is unchunked — its own source says
 `//TODO: Add chunked kernel for even faster pre-fill` — and 48 of this
-model's 64 layers use it. Don't generalise to dense models.
+model's 64 layers use it. Don't generalise to all-full-attention models.
 
 **Prefix caching dominates agentic workloads** (93% hit rate, 0.38s mean
 TTFT) and was off by default. Restarting a server wipes it, so don't

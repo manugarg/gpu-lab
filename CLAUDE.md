@@ -118,7 +118,7 @@ Things that cost real time to learn, all in notes/ and serve/README.md:
 
 - vLLM's prefill advantage on *this* model is mostly one unchunked
   llama.cpp kernel (`gated_delta_net.cu:180` says so in a TODO) covering
-  48 of 64 layers. Don't generalise it to dense models.
+  48 of 64 layers. Don't generalise it to all-full-attention models.
 - **Measurement context invalidates most published numbers**, including
   several of mine. MTP is 2.07x at 26 tokens and 1.06x at 50K; f16 KV is
   the fastest choice at trivial context and 3.7x the slowest at 50K.

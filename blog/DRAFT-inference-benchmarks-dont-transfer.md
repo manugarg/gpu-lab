@@ -179,8 +179,8 @@ Power draw turned out to be the single most useful diagnostic in this
 whole exercise. Utilization percentages lie; watts don't.
 
 This cause is **general**. It has nothing to do with hybrid attention and
-would apply to a dense model too. It's the part visible at 1024 tokens as
-a 3.8x gap, before anything else dominates.
+would apply to an all-full-attention model too. It's the part visible at
+1024 tokens as a 3.8x gap, before anything else dominates.
 
 **Cause 2: one unfinished kernel, which is where the other 10x lives.**
 

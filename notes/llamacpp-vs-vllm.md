@@ -344,8 +344,8 @@ unchunked — it walks prefill sequentially where a chunked implementation
 would go parallel. So this is not "vLLM is faster than llama.cpp"; it is
 "llama.cpp has not optimised prefill for hybrid linear-attention models
 yet, and this model is 75% such layers." Expect the gap to shrink when
-that TODO lands, and **do not generalise this result to dense models** —
-for a conventional architecture llama.cpp's prefill is far more
+that TODO lands, and **do not generalise this result to all-full-attention
+models** — for a conventional architecture llama.cpp's prefill is far more
 competitive.
 
 A secondary term: prefill is compute-bound, so GEMM kernel quality also
