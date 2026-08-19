@@ -56,6 +56,23 @@ which all source env/env.sh:
   ALWAYS pass -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc.
   PATH alone does not protect you. Confirm which one a failing build
   actually used by looking for __CUDACC_VER_MAJOR__ in its output.
+- -DCMAKE_CUDA_COMPILER is NOT sufficient. It fixes the *compiler*;
+  CMake still resolves the CUDA *runtime* separately and picks the
+  distro's /usr/lib/x86_64-linux-gnu/libcudart.so (12.4). cudaDeviceProp
+  changed layout between CUDA 12 and 13, so a 13.3-compiled binary reads
+  that struct at the wrong offsets and silently gets garbage —
+  multiProcessorCount comes back as **1** instead of 170.
+  Nothing errors. Kernels launch with grids sized for a 1-SM GPU.
+  This cost llama.cpp 5.8x prefill at 16K and 16.7x at 50K, and very
+  nearly cost a blog post its thesis (2026-08-19).
+  ALWAYS also pass:
+    -DCUDAToolkit_ROOT=/usr/local/cuda-13.3
+    -DCUDA_cudart_LIBRARY=/usr/local/cuda-13.3/lib64/libcudart.so
+  VERIFY after every build — this is the only reliable check:
+    ldd <built>.so | grep cudart     # must say libcudart.so.13, not .12
+  CMakeCache.txt lies by omission here: CUDAToolkit_BIN_DIR can read
+  /usr/local/cuda-13.3/bin while CUDA_cudart_LIBRARY points at the
+  distro 12.4 one. Check both lines, not just the first.
 - cmake is not installed system-wide. `uv tool install cmake` gets it
   in isolation; do NOT pip-install build tools into either vllm venv.
 - A global git config rewrites https://github.com/ to git@github.com:
@@ -112,7 +129,23 @@ driving opencode. Chosen on measurement, not preference:
 | perplexity (matched protocol) | 2.2542 +/- 0.0876 | 2.2832 |
 
 The quality difference is +1.29% against a +/-3.9% error bar — nothing.
-The speed difference is ~4x end to end.
+
+**The llama.cpp speed rows above are SUPERSEDED (2026-08-19).** They were
+measured against a build that linked the wrong CUDA runtime and therefore
+saw a 1-SM GPU (see "Build hazards"). Re-measured on the fixed build,
+same flags, same prompts:
+
+| | llama.cpp (old) | llama.cpp (fixed) | vLLM |
+|---|---|---|---|
+| prefill @16K | 567 tok/s | **3,244** | 8,333 |
+| prefill @50K | ~165 tok/s | **2,754** | 6,713 |
+| decode @16K | 51.9 tok/s | **63.8** | 69.8 |
+| decode @50K | 35.2 tok/s | **57.6** | 63.8 |
+
+The engine gap at 50K is ~2.4x on prefill and ~1.1x on decode, not the
+40x and 1.8x recorded above. The PR-review wall clock has NOT been
+re-measured on the fixed build, so "~20 min vs 4 min" is unverified and
+should not be quoted. The deployment choice has not been revisited.
 
 Things that cost real time to learn, all in notes/ and serve/README.md:
 
