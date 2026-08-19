@@ -157,6 +157,15 @@ very different paths there:
   trace mangled `cutlass::device_kernel` symbols account for ~73% of GPU
   time.
 
+A tensor core is a dedicated matrix-multiply unit: it consumes a whole
+tile of the matrix per instruction, where a general-purpose CUDA core
+does scalar arithmetic a few elements at a time. CUTLASS is NVIDIA's
+library for building GEMM kernels that actually keep them fed. A kernel
+that dequantizes into ordinary CUDA arithmetic leaves that hardware
+sitting idle. If you want the tiling details, NVIDIA's "Efficient GEMM
+in CUDA" is the canonical write-up:
+https://docs.nvidia.com/cutlass/latest/media/docs/cpp/efficient_gemm.html
+
 You can see the difference in the power meter. Same GPU, same phase,
 same model:
 
