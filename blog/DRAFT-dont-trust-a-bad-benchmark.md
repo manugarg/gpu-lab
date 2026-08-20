@@ -9,15 +9,16 @@ This is what runs on my desk now: a 27-billion-parameter hybrid-attention
 model, quantized to about 21 GB, serving a coding agent from a single
 consumer GPU.
 
-| | llama.cpp, Qwen3.8-27B UD-Q5_K_XL |
-|---|---|
-| prefill @16K context | 3,244 tok/s |
-| prefill @50K context | 2,754 tok/s |
-| decode @16K | 63.7 tok/s — 128.5 with the model's speculative head |
-| context window | up to 262,144 tokens |
+| llama.cpp, Qwen3.8-27B UD-Q5_K_XL | @16K context | @50K context |
+|---|---|---|
+| prefill | 3,069 tok/s | 2,643 tok/s |
+| decode (speculative head on) | 101.3 tok/s | 92.4 tok/s |
+| context window | 229,376 tokens | |
 
 It reviews pull requests, and it's quick enough that I stopped thinking
-about it.
+about it. Those decode figures are measured against a prompt the model
+has to actually answer — which matters more than it sounds like, for
+reasons I'll come back to.
 
 Getting there took three weeks. For most of them the same hardware ran
 the same work at roughly a fifth of that speed, and I had a complete set

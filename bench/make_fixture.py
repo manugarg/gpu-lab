@@ -54,13 +54,31 @@ miss on their first read. Write in flowing paragraphs, not bullet points.
 
 
 def count_tokens(text, host, model):
-    req = urllib.request.Request(
-        f"http://{host}/tokenize",
-        data=json.dumps({"model": model, "prompt": text}).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.load(r)["count"]
+    """Token count from whichever engine is listening.
+
+    The two /tokenize endpoints disagree on both halves of the contract:
+    vLLM takes {"model","prompt"} and returns {"count","tokens"};
+    llama.cpp takes {"content"} and returns {"tokens"} with no count.
+    Try the vLLM shape first, fall back to llama.cpp's.
+    """
+    for body in ({"model": model, "prompt": text}, {"content": text}):
+        req = urllib.request.Request(
+            f"http://{host}/tokenize",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                d = json.load(r)
+        except urllib.error.HTTPError:
+            continue
+        # llama.cpp answers 200 to a vLLM-shaped body but tokenizes the
+        # absent "content" field, returning an empty list. A zero count for
+        # non-empty text means wrong shape, not a short prompt - keep trying.
+        n = d.get("count", len(d.get("tokens", [])))
+        if n:
+            return n
+    raise RuntimeError(f"no usable /tokenize on {host}")
 
 
 def gather(repo):
