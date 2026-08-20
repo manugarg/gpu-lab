@@ -2,3 +2,4 @@
 /profile/results/
 /bench/results/
 __pycache__/
+/bench/fixtures/
