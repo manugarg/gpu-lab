@@ -142,6 +142,39 @@ most prefill after a session's first turn, which is why context won.
 load. 229376 leaves ~1.1 GiB headroom of 32 GiB. The draft head costs
 ~3 GiB; without MTP the full 262144 fits.
 
+**Weights are pinned by path**, not globbed from the HF cache:
+`LLAMA_GGUF=~/models/Qwen3.8-27B-UD-Q5_K_XL-dynamic2.0.gguf` in the unit.
+`hf download` rewrites the cache snapshot symlink in place, so a
+re-download silently swaps the weights under `serve/llama.sh`'s glob —
+that happened 2026-08-19 when Unsloth shipped Dynamic 3.0. `~/models/*`
+are **hardlinks** to the HF blobs: no extra disk, and the blob survives
+an `hf cache` GC that would otherwise free an unreferenced version.
+
+**Unsloth Dynamic 3.0 was evaluated and declined (2026-08-19).** Both
+versions are cached; 3.0 is at
+`~/models/Qwen3.8-27B-UD-Q5_K_XL-dynamic3.0.gguf` if you want to retry.
+
+| | 2.0 (deployed) | 3.0 |
+|---|---|---|
+| perplexity (same corpus) | 4.3647 +/- 0.0667 | 4.3598 +/- 0.0667 |
+| decode @50K | **91.4 tok/s** | 86.9 tok/s |
+| draft acceptance | 49% | 46% |
+| VRAM @229376 | 31,442 MiB | 31,910 MiB |
+| size | 20.22 GB | 20.88 GB |
+
+The perplexity difference is 0.11% against a 1.5% error bar — 14x
+smaller than the uncertainty, i.e. nothing. The decode cost is real and
+repeatable (3 samples within 0.3 tok/s) and tracks the 3.3% size
+increase, since decode is bandwidth-bound. Unsloth's **"+10% accuracy"
+is measured against competing quantizers at equal file size, not against
+Dynamic 2.0**, so it never predicted a gain here.
+
+Caveat: perplexity is a weak instrument. Their claim rests on KL
+divergence against full precision and top-1% accuracy with calibration
+tuned for agentic coding. This test rules out a large gain, not a small
+one. MTP tensors are intact in 3.0 (866 tensors, 4 `nextn` in both) —
+the "MTP removed" note applies only to quants under 8.37 GB.
+
 To switch back: `systemctl --user disable --now llama-qwen38.service &&
 systemctl --user enable --now vllm-qwen38.service`. The units
 `Conflicts=` each other, so they will not both run. Then in
