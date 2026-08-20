@@ -143,9 +143,20 @@ load. 229376 leaves ~1.1 GiB headroom of 32 GiB. The draft head costs
 ~3 GiB; without MTP the full 262144 fits.
 
 To switch back: `systemctl --user disable --now llama-qwen38.service &&
-systemctl --user enable --now vllm-qwen38.service`, and set
-`opencode.json` `baseURL` to :8000 and `limit.context` to 131072. The
-units `Conflicts=` each other, so they will not both run.
+systemctl --user enable --now vllm-qwen38.service`. The units
+`Conflicts=` each other, so they will not both run. Then in
+`opencode.json` change **all four** engine-dependent fields:
+
+| field | llama.cpp | vLLM |
+|---|---|---|
+| `options.baseURL` | `http://127.0.0.1:8080/v1` | `http://127.0.0.1:8000/v1` |
+| `limit.context` (x3) | 229376 | 131072 |
+| `name` (display label) | `llama.cpp (local)` | `vLLM (local)` |
+
+The provider *key* is `llama-cpp-local` regardless — renaming it would
+break existing opencode sessions, so it is not an engine indicator. The
+`name` field is what the UI shows, and it silently went stale across the
+last switch.
 
 Numbers from before 2026-08-19 came from a build that read
 `multiProcessorCount` as 1 (see "Build hazards") and are retracted: the
