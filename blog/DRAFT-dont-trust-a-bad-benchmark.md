@@ -101,6 +101,17 @@ utilization. After the fix, the identical workload drew **570 W**. That
 number costs nothing to collect, and I had been watching it for days
 without thinking about it.
 
+![Board power during an identical 16,000-token prefill. The broken build
+holds about 200 W for 29 seconds; the fixed build spikes to roughly 600 W
+and finishes in 5 seconds, using half the total
+energy.](power-draw-broken-vs-fixed.png)
+
+The shapes are the whole story. Same prompt, same GPU, same model: a low
+flat plateau that runs forever, against a short square block that pins
+the card. And the area under each curve is energy — **5.85 kJ broken vs
+2.87 kJ fixed**. The misconfigured build didn't just take 5.9x longer,
+it burned roughly *twice the energy* to do the same work.
+
 If you publish one extra column with a benchmark, publish watts.
 
 ## Compare what you got to what exists

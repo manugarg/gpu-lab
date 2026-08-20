@@ -1,0 +1,78 @@
+<style>
+  .viz-root{
+    color-scheme: light;
+    --surface-1:#fcfcfb; --text-primary:#0b0b0b; --text-secondary:#52514e;
+    --text-muted:#6f6e6a; --grid:#e3e2df;
+    --series-1:#eb6834;   /* broken */
+    --series-2:#2a78d6;   /* fixed  */
+    background:var(--surface-1);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Arial,sans-serif;
+    width:1200px; padding:28px 32px 20px; box-sizing:border-box;
+  }
+  :root[data-theme="dark"] .viz-root{
+    color-scheme: dark;
+    --surface-1:#1a1a19; --text-primary:#fff; --text-secondary:#c3c2b7;
+    --text-muted:#a3a29a; --grid:#33322f; --series-1:#d95926; --series-2:#3987e5;
+  }
+  .t{font-size:27px;font-weight:650;color:var(--text-primary);letter-spacing:-.3px;margin:0 0 6px}
+  .s{font-size:16px;color:var(--text-secondary);margin:0 0 4px}
+  .legend{display:flex;gap:22px;margin:14px 0 0;font-size:15px;color:var(--text-secondary)}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:7px;vertical-align:middle}
+  .foot{font-size:13px;color:var(--text-muted);margin:12px 0 0;line-height:1.5;max-width:1010px}
+</style>
+
+<div class="viz-root">
+  <p class="t">Same prompt, same GPU, same model &mdash; one build linked the wrong CUDA runtime</p>
+  <p class="s">Board power during a 16,000-token prefill on an RTX 5090, sampled at 5&nbsp;Hz</p>
+
+  <svg width="1136" height="470" viewBox="0 0 1136 470" role="img"
+       aria-label="Power draw over time. The broken build holds about 200 watts for 29 seconds. The fixed build spikes to about 530 watts and finishes in 5 seconds, using half the total energy.">
+    <g stroke="var(--grid)" stroke-width="1">
+      <line x1="118" y1="400.0"   x2="980" y2="400.0"/>
+      <line x1="118" y1="295.38461538461536" x2="980" y2="295.38461538461536"/>
+      <line x1="118" y1="190.76923076923077" x2="980" y2="190.76923076923077"/>
+      <line x1="118" y1="86.15384615384613" x2="980" y2="86.15384615384613"/>
+    </g>
+    <g font-size="14" fill="var(--text-muted)" text-anchor="end">
+      <text x="104" y="405.0">0</text>
+      <text x="104" y="300.38461538461536">200</text>
+      <text x="104" y="195.76923076923077">400</text>
+      <text x="104" y="91.15384615384613">600</text>
+    </g>
+    <text x="42" y="230" font-size="14" fill="var(--text-secondary)"
+          text-anchor="middle" transform="rotate(-90 42 230)">board power (W)</text>
+
+    <!-- card rating reference -->
+    <g stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="4 4" opacity="0.65">
+      <line x1="118" y1="99.23076923076923" x2="980" y2="99.23076923076923"/>
+    </g>
+    <text x="980" y="92.23076923076923" font-size="13" fill="var(--text-muted)" text-anchor="end">card rating ~575 W</text>
+
+    <!-- x axis -->
+    <g font-size="14" fill="var(--text-secondary)" text-anchor="middle">
+      <text x="118.0" y="428">0s</text>
+      <text x="399.69934640522877" y="428">10s</text>
+      <text x="681.3986928104575" y="428">20s</text>
+      <text x="963.0980392156862" y="428">30s</text>
+    </g>
+
+    <polyline fill="none" stroke="var(--series-1)" stroke-width="2.5"
+              stroke-linejoin="round" points="118.0,362.2 123.6,362.2 129.3,362.2 134.9,362.0 140.5,362.0 146.2,291.6 151.8,291.6 157.4,291.6 163.1,229.1 168.7,229.1 174.3,218.7 180.0,218.7 185.6,218.7 191.2,239.3 196.9,239.3 202.5,251.5 208.1,251.5 213.8,251.5 219.4,259.4 225.0,259.4 230.7,265.7 236.3,265.7 241.9,265.7 247.6,268.7 253.2,268.7 258.8,274.5 264.5,274.5 270.1,274.5 275.8,278.4 281.4,278.4 287.0,280.0 292.7,280.0 298.3,280.0 303.9,283.3 309.6,283.3 315.2,285.1 320.8,285.1 326.5,285.1 332.1,285.8 337.7,285.8 343.4,289.9 349.0,289.9 354.6,289.9 360.3,289.9 365.9,289.9 371.5,290.9 377.2,290.9 382.8,290.9 388.4,292.4 394.1,292.4 399.7,294.7 405.3,294.7 411.0,294.7 416.6,294.6 422.2,294.6 427.9,294.6 433.5,294.6 439.1,294.6 444.8,296.0 450.4,296.0 456.0,297.5 461.7,297.5 467.3,297.5 472.9,299.1 478.6,299.1 484.2,298.4 489.8,298.4 495.5,298.4 501.1,300.1 506.7,300.1 512.4,300.1 518.0,300.1 523.6,300.1 529.3,301.5 534.9,301.5 540.5,301.5 546.2,301.5 551.8,301.5 557.5,302.4 563.1,302.4 568.7,301.6 574.4,301.6 580.0,301.6 585.6,304.4 591.3,304.4 596.9,303.7 602.5,303.7 608.2,303.7 613.8,303.6 619.4,303.6 625.1,304.2 630.7,304.2 636.3,304.2 642.0,304.2 647.6,304.2 653.2,304.3 658.9,304.3 664.5,304.3 670.1,306.3 675.8,306.3 681.4,306.3 687.0,306.3 692.7,306.3 698.3,306.7 703.9,306.7 709.6,306.7 715.2,306.7 720.8,306.7 726.5,306.6 732.1,306.6 737.7,308.4 743.4,308.4 749.0,308.4 754.6,308.3 760.3,308.3 765.9,306.6 771.5,306.6 777.2,306.6 782.8,308.5 788.4,308.5 794.1,308.4 799.7,308.4 805.3,308.4 811.0,308.3 816.6,308.3 822.2,310.4 827.9,310.4 833.5,310.4 839.2,308.1 844.8,308.1 850.4,307.9 856.1,307.9 861.7,307.9 867.3,310.1 873.0,310.1 878.6,309.5 884.2,309.5 889.9,309.5 895.5,309.1 901.1,309.1 906.8,309.8 912.4,309.8 918.0,309.8 923.7,310.6 929.3,310.6 934.9,315.6 940.6,315.6 946.2,315.6 951.8,334.5 957.5,334.5 963.1,348.5 968.7,348.5 974.4,348.5 980.0,348.5"/>
+    <polyline fill="none" stroke="var(--series-2)" stroke-width="2.5"
+              stroke-linejoin="round" points="118.0,360.8 123.6,360.8 129.3,358.8 134.9,358.8 140.5,358.8 146.2,216.7 151.8,216.7 157.4,81.6 163.1,81.6 168.7,81.6 174.3,86.0 180.0,86.0 185.6,85.9 191.2,85.9 196.9,85.9 202.5,86.3 208.1,86.3 213.8,86.1 219.4,86.1 225.0,86.1 230.7,86.1 236.3,86.1 241.9,86.0 247.6,86.0 253.2,86.0 258.8,86.0 264.5,86.0 270.1,151.3 275.8,151.3 281.4,282.2 287.0,282.2 292.7,282.2 298.3,347.9 303.9,347.9 309.6,348.0 315.2,348.0"/>
+
+    <text x="568.718954248366" y="269.2307692307692" font-size="15" font-weight="600" fill="var(--text-primary)">broken &mdash; 29s, mean 202 W</text>
+    <text x="208.1437908496732" y="80.15384615384613" font-size="15" font-weight="600" fill="var(--text-primary)">fixed &mdash; 5s, mean 532 W</text>
+  </svg>
+
+  <div class="legend">
+    <span><i style="background:var(--series-1)"></i>broken build (linked libcudart.so.12)</span>
+    <span><i style="background:var(--series-2)"></i>fixed build (libcudart.so.13)</span>
+  </div>
+  <p class="foot">
+    Identical work. The broken build reported <strong>100% GPU utilization</strong> the entire time it
+    was drawing a third of the card's power budget &mdash; it was running the attention kernel on 2 of
+    170 SMs. Area under each curve is energy: <strong>5.85&nbsp;kJ broken vs 2.87&nbsp;kJ fixed</strong>,
+    so the misconfigured build burned roughly twice the energy to do the same job 5.9&times; slower.
+  </p>
+</div>
