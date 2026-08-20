@@ -132,30 +132,50 @@ The quality difference is +1.29% against a +/-3.9% error bar — nothing.
 
 **The llama.cpp speed rows above are SUPERSEDED (2026-08-19).** They were
 measured against a build that linked the wrong CUDA runtime and therefore
-saw a 1-SM GPU (see "Build hazards"). Re-measured on the fixed build,
-same flags, same prompts:
+saw a 1-SM GPU (see "Build hazards").
 
-| | llama.cpp (old) | llama.cpp (fixed) | vLLM |
-|---|---|---|---|
-| prefill @16K | 567 tok/s | **3,244** | 8,333 |
-| prefill @50K | ~165 tok/s | **2,754** | 6,713 |
-| decode @16K | 51.9 tok/s | **63.8** | 69.8 |
-| decode @50K | 35.2 tok/s | **57.6** | 63.8 |
+Matched re-measurement at 50K — both engines, MTP on, same prompt, using
+the realistic fixture from `bench/make_fixture.py`:
 
-The engine gap at 50K is ~2.4x on prefill and ~1.1x on decode, not the
-40x and 1.8x recorded above. The PR-review wall clock has NOT been
-re-measured on the fixed build, so "~20 min vs 4 min" is unverified and
-should not be quoted. The deployment choice has not been revisited.
+| @50K | llama.cpp | vLLM |
+|---|---|---|
+| prefill | 2,659 tok/s | **5,962 tok/s** (2.2x) |
+| decode | **91.8 tok/s** | 89.8 tok/s (tie) |
+| context | **262,144** | 131,072 |
+
+So the real trade is vLLM's 2.2x prefill against llama.cpp's 2x context.
+Decode is a tie. The deployment choice has NOT been revisited.
+
+Unmatched numbers, kept only because nothing better exists yet:
+llama.cpp fixed @16K is 3,244 tok/s prefill and 63.7 tok/s decode
+(MTP *off*). The vLLM 8,333 / 6,713 / 69.8 / 63.8 figures from
+2026-08-17 were cold-start with MTP state unrecorded — the 69.8 is
+contradicted by Prometheus, which has vLLM decode at median 75.5,
+p90 111.2, peak 127.1 tok/s. Don't quote them.
+
+The old "~20 min vs 4 min" PR-review wall clock has NOT been re-measured
+and should not be quoted at all.
 
 Things that cost real time to learn, all in notes/ and serve/README.md:
 
-- vLLM's prefill advantage on *this* model is mostly one unchunked
-  llama.cpp kernel (`gated_delta_net.cu:180` says so in a TODO) covering
-  48 of 64 layers. Don't generalise it to all-full-attention models.
-- **Measurement context invalidates most published numbers**, including
-  several of mine. MTP is 2.07x at 26 tokens and 1.06x at 50K; f16 KV is
-  the fastest choice at trivial context and 3.7x the slowest at 50K.
-  Always state the context length a number was taken at.
+- vLLM's remaining prefill advantage is **the GEMM**, not attention and
+  not Gated DeltaNet. Profiled on the fixed build at 50K: `mul_mat_q`
+  58.3%, flash-attn 21.0%, GDN 10.4%. NVFP4 through CUTLASS on native
+  FP4 units beats Q5_K through int8 IMMA with k-quant unpacking. The
+  older claim that GDN's unchunked kernel dominated was measured on the
+  broken build and is wrong.
+- **Benchmark fixtures can inflate speculative decoding.** The old
+  `dec-ctx50k.json` / `vd-50k.json` are random words; the model echoes
+  the prompt back, draft acceptance hits ~100%, and decode throughput
+  measures nothing (llama.cpp read 147 tok/s emitting a copy of its own
+  input). Use `bench/make_fixture.py`. Sanity check: real acceptance is
+  ~49%, and 100% means the number is junk.
+- **Always state the context length a number was taken at** — but note
+  the two examples this rule used to cite were themselves artifacts of
+  the broken build and are now retracted. On a correct build, MTP holds
+  ~2x at every context (not 2.07x -> 1.06x), and KV dtype is a ~2%
+  spread with f16 marginally *fastest* at 16K and 50K (not "f16 is 3.7x
+  slower at 50K"). Re-measured 2026-08-19; see notes/llamacpp-vs-vllm.md.
 - Prefix caching dominates agentic workloads (93% hit rate, TTFT 0.38s)
   and was **off** by default in vLLM.
 - Restarting a server wipes its KV cache, so the next turn re-prefills
