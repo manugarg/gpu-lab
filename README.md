@@ -13,14 +13,23 @@ deployed.
 Qwen3.8-27B served by vLLM on :8000, driving opencode:
 
 ```
-./serve/vllm-qwen38.sh          # vLLM  + MTP, 82K context   (daily driver)
+./serve/vllm-qwen38.sh          # vLLM + MTP, 131K context   (daily driver)
 ./serve/llama.sh                # llama.cpp alternative, :8080
 ./serve/monitor.sh              # live throughput + GPU view
 ```
 
-The same PR review takes **~20 min on llama.cpp, 4 min on vLLM**, with no
-measurable quality difference between the two quantizations
-(perplexity 2.2542 vs 2.2832, inside the error bar).
+Matched measurement at 50K context — both engines, MTP on, realistic
+fixture:
+
+| @50K | llama.cpp | vLLM |
+|---|---|---|
+| prefill | 2,659 tok/s | **5,962 tok/s** (2.2x) |
+| decode | **91.8 tok/s** | 89.8 tok/s (tie) |
+| context | **262,144** | 131,072 |
+
+The trade is vLLM's prefill speed against llama.cpp's 2x context window;
+decode is a tie. No measurable quality difference between the two
+quantizations (perplexity 2.2542 vs 2.2832, inside the error bar).
 
 ## Scripts
 
@@ -32,6 +41,7 @@ measurable quality difference between the two quantizations
 | `serve/monitor.sh` | read-only live view: slots, GPU, prefill/decode |
 | `serve/logproxy.py` | logs what a client actually sends |
 | `bench/run.sh` · `bench/summarize.py` | throughput benchmark vs the 14B baseline |
+| `bench/make_fixture.py` | build long-context fixtures speculation can't cheat |
 | `profile/capture.sh` · `report.py` | torch-profiler capture and analysis |
 | `env/setup.sh` | verifies the CUDA/FlashInfer toolchain |
 
@@ -53,19 +63,37 @@ Explanatory, in rough reading order:
 | `notes/qwen3.8-27b-options.md` | checkpoint survey and VRAM budgets |
 | `notes/llamacpp-vs-vllm.md` | the measurements, including the ones that killed my own hypotheses |
 
-## Three things worth knowing before trusting any benchmark
+## Four things worth knowing before trusting any benchmark
 
-**Measurement context invalidates most published numbers.** MTP is 2.07x
-at 26 tokens of context and 1.06x at 50K. f16 KV cache is the *fastest*
-choice at trivial context and 3.7x the *slowest* at 50K. Both readings
-are correct; neither generalises. Always state the context length.
+**A slow number can be your own machine.** This repo spent three weeks on
+an engine comparison showing vLLM prefilling 15-40x faster than
+llama.cpp. The real figure is 2.2x. The build had been compiled against
+CUDA 13 headers and linked against the distro's CUDA 12 `libcudart`;
+`cudaDeviceProp` changed layout between those versions, so llama.cpp read
+`multiProcessorCount` as **1** instead of 170 and launched attention on 2
+of 170 SMs. No error, no warning — just consistent, reproducible, wrong
+numbers. Check anything you build with `ldd <lib>.so | grep cudart`, and
+see `CLAUDE.md` "Build hazards".
 
-**Big engine gaps often trace to one kernel, not engine quality.** vLLM
-prefills 15-40x faster than llama.cpp *on this model* largely because
-llama.cpp's Gated DeltaNet kernel is unchunked — its own source says
-`//TODO: Add chunked kernel for even faster pre-fill` — and 48 of this
-model's 64 layers use it. Don't generalise to all-full-attention models.
+**Watch power, not utilization.** `nvidia-smi` reported 100% utilization
+the whole time the card was drawing 160 W of a 575 W budget. Utilization
+means a kernel is resident, not that the silicon is busy. The fixed build
+draws 570 W on the same work — and uses *half* the total energy, because
+it finishes 5.9x sooner.
+
+**Benchmark fixtures can inflate speculative decoding.** The old
+long-context fixtures were random words; asked to continue, the model
+echoed the prompt back, draft acceptance hit ~100%, and decode throughput
+measured nothing (llama.cpp read 147 tok/s while emitting a copy of its
+own input). Use `bench/make_fixture.py`; real acceptance is ~49%, and
+100% means the number is junk.
 
 **Prefix caching dominates agentic workloads** (93% hit rate, 0.38s mean
 TTFT) and was off by default. Restarting a server wipes it, so don't
 restart mid-session and then time the next turn.
+
+Always state the context length a number was taken at. Note that the two
+examples this README previously used for that rule — MTP decaying from
+2.07x to 1.06x, and f16 KV being 3.7x slower at 50K — were both artifacts
+of the broken build and are retracted. On a correct build MTP holds ~2x
+throughout and KV dtype is a ~2% spread.
