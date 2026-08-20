@@ -1,31 +1,42 @@
-# Don't trust a bad performance number
+# Running Qwen3.8-27B on an RTX 5090: an unsuspecting bug, and the journey to a capable local LLM
 
-*Measured on an RTX 5090 (32 GB, sm_120), Ubuntu 26.04, running
-Qwen3.8-27B locally. Every number here is from this machine.*
+*All numbers measured on one machine — RTX 5090 (32 GB, sm_120),
+Ubuntu 26.04, CUDA 13.3.*
 
 ---
 
-There's an asymmetry in how we treat benchmarks.
+This is what runs on my desk now: a 27-billion-parameter hybrid-attention
+model, quantized to about 21 GB, serving a coding agent from a single
+consumer GPU.
 
-When a number comes out surprisingly *good*, we get suspicious. We check
-whether the cache was warm, whether the compiler eliminated the loop,
-whether we measured what we meant to.
+| | llama.cpp, Qwen3.8-27B UD-Q5_K_XL |
+|---|---|
+| prefill @16K context | 3,244 tok/s |
+| prefill @50K context | 2,754 tok/s |
+| decode @16K | 63.7 tok/s — 128.5 with the model's speculative head |
+| context window | up to 262,144 tokens |
 
-When a number comes out **bad**, we accept it. We write it down, compare
-tools, pick one. Slow feels like the default state of the world. Nobody
-audits a disappointing result.
+It reviews pull requests, and it's quick enough that I stopped thinking
+about it.
 
-I spent three weeks comparing two inference engines on the same model
-and the same GPU. One was 40x faster at reading long prompts. I profiled
-it, found mechanisms, wrote it up, changed what I run daily.
+Getting there took three weeks. For most of them the same hardware ran
+the same work at roughly a fifth of that speed, and I had a complete set
+of measurements explaining why: an engine comparison, a kernel-level
+mechanism, a quantization tradeoff, a result about speculative decoding.
+Every one of them reproducible. Every one stable across repeated runs.
+Every one wrong.
 
-The 40x wasn't real. My machine was executing that workload on **1.2% of
-the GPU** and had been the whole time. Every number I collected was
-reproducible, stable, and an artifact of my own build.
+They were all artifacts of my own build, which linked a CUDA runtime one
+major version away from its compiler and therefore believed the GPU had
+**one** streaming multiprocessor instead of 170. The attention kernel ran
+on 1.2% of the card for three weeks.
 
-The useful part isn't the bug. It's that nothing in the normal
-performance-measurement workflow catches this, and a handful of cheap
-habits do.
+I never questioned any of it, because the numbers were bad. A
+surprisingly *fast* result gets audited. A slow one gets written down and
+turned into a comparison table.
+
+What follows is what I should have checked, in the order I should have
+checked it. The bug is incidental. The checks are not.
 
 ## "Slow" is not a fact about the software
 
