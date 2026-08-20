@@ -3,10 +3,26 @@
 Companion to `hybrid-attention-and-kv-cache.md` (the memory side) and
 `llamacpp-vs-vllm.md` (the measurement). This note covers what Gated
 DeltaNet *computes* and who has to implement it. It also records the nsys
-finding that **GDN is only ~2% of GPU time** in a 16K prefill: the real
-prefill bottleneck is the full-attention **flash kernel**, not GDN. (This
-supersedes the earlier claim in this note — and in the blog's "Cause 2" —
-that GDN's unchunked kernel is the dominant term.)
+finding that **GDN is only ~2% of GPU time** in a 16K prefill: the dominant
+term is the full-attention **flash kernel**, not GDN. (This supersedes the
+earlier claim in this note — and in the blog's "Cause 2" — that GDN's
+unchunked kernel is the dominant term.) Caveat: the flash kernel's 83% share
+is inflated by a **build misconfiguration** in the profiled binary (it saw a
+1-SM GPU — see §2). Re-profiled on the correctly-linked build at 50K, the
+ordering inverts entirely:
+
+| kernel | broken @16K | **fixed @50K** |
+|---|---|---|
+| `mul_mat_q` (GEMMs) | 13.2% | **58.3%** |
+| `flash_attn_ext_f16` | 82.9% | 21.0% |
+| `gated_delta_net_cuda` | 2.0% | 10.4% |
+
+So GDN is not the bottleneck on either build, but it is not negligible
+either once attention is fixed — 10.4% at 50K, where a chunked kernel
+would still be worth having. The prefill bottleneck on a working build is
+the **GEMM**, which is where vLLM's remaining ~2.2x advantage lives:
+NVFP4 through CUTLASS on native FP4 units against Q5_K through int8 IMMA
+with k-quant unpacking per tile.
 
 ---
 
@@ -60,25 +76,36 @@ reason:
   causal-mask gradient (early blocks attend to few KV tokens, late ones to
   all 16K).
 - At 16K causal, attention ≈ 53 TFLOP, so the kernel runs at 53/23.4 ≈
-  **2.3 TFLOP/s ≈ 0.1% of the 5090's ~2000 TFLOP/s F16 tensor peak**. The
-  tensor cores are not slow — they are almost entirely idle. The GEMMs run
-  at ~150 TFLOP/s (~7% of peak, a normal GEMM); the ~67× efficiency gap
-  matches the 85× grid ratio (170/2).
+  **2.26 TFLOP/s ≈ 1.08% of the 5090's ~210 TFLOP/s dense FP16 tensor
+  peak**. Compare that to the fraction of the GPU actually running: 2
+  blocks of 170 SMs is **1.18%**. The two agreeing is the diagnosis —
+  per-SM the kernel performs as designed; the work simply isn't spread
+  across the hardware. (The GEMMs run at ~150 TFLOP/s, a normal
+  quantized-GEMM rate.)
 
-**The likely fix.** The current source's `launch_fattn`
-(`ggml/src/ggml-cuda/fattn-common.cuh:1120`) has a **stream-K** path that
-launches with `blocks_num.x = min(max_blocks_per_sm × nsm, …)` = **170**
-(all SMs). The profiled binary (built 2026-08-14) launched with 2, so it
-**predates that optimization**. Rebuilding from the current checkout should
-make attention use all 170 SMs — up to ~85× on that kernel (23.4s → ~0.3s),
-dropping the 16K prefill from ~28s to ~5s and making the GEMMs the new
-bottleneck. (Verification via rebuild + re-profile is in progress.)
+**The cause — a build misconfiguration, not a kernel defect.** The source's
+`launch_fattn` (`ggml/src/ggml-cuda/fattn-common.cuh:1120`) has a **stream-K**
+path that launches with `blocks_num.x = min(max_blocks_per_sm × nsm, …)`. It
+does exactly what the source says: on the profiled binary,
+`max_blocks_per_sm × nsm = 2 × 1 = 2`, so the grid is (2,1,1). The `nsm=1` is
+garbage — the profiled binary (built 2026-08-14) was compiled with CUDA 13.3
+headers but linked against the distro's **CUDA 12.4 `libcudart.so.12`**, and
+`cudaDeviceProp`'s layout changed between the two, so `multiProcessorCount`
+read back as **1** instead of 170 (see CLAUDE.md "Build hazards"). Linking
+against `libcudart.so.13` restores `nsm=170` and the grid to 340 blocks
+(2 per SM × 170 SMs). Re-measured on the fixed build: 16K prefill **567 →
+3,244 tok/s** (CLAUDE.md).
+The stream-K code was present and correct all along — this was a build bug on
+this box, not a llama.cpp kernel defect.
 
 **On the ~160 W figure.** The "idle tensor cores → low power" behaviour
 that this note originally attributed to GDN actually characterizes the
-flash kernel (2-block grid → 99% idle). GDN's kernel *is* sequential and
-memory-bound (below), but at 2% of GPU time it cannot be the sustained
-draw. Revisit the 160 W against the flash kernel, not GDN.
+flash kernel *as profiled* (2-block grid → 99% idle). GDN's kernel *is*
+sequential and memory-bound (below), but at 2% of GPU time it cannot be the
+sustained draw. Revisit the 160 W against the flash kernel, not GDN — and
+note the 2-block grid (hence the idle-SM power signature) is a build
+artifact; on the fixed build the flash kernel uses all 170 SMs and the power
+picture changes.
 
 ### GDN's kernel, for the record
 
@@ -129,13 +156,14 @@ is the whole reason the two engines disagree by 15–40× on prefill for
 **Do not generalise on the attention axis.** Qwen3.8-27B is a *dense*
 model in the usual sense (non-MoE — all 27B params active per token); the
 caveat is about **attention type**, not MoE-ness. Note the reversal this
-finding implies: the prefill gap is driven by the **full-attention** flash
-kernel (§2), not the GDN layers. The 2-block grid is a property of the
-profiled binary's `launch_fattn`, not of the model — so it hits every
-full-attention layer in any model (an all-full-attention model would run
-the slow flash kernel on all 64 layers, not 16). The "llama.cpp is
-competitive on all-full-attention prefill" claim was measured on the
-pre-stream-K build and should be re-checked against a rebuilt binary.
+finding implies: in the profiled (broken) build, the prefill gap is driven
+by the **full-attention** flash kernel (§2), not the GDN layers. The 2-block
+grid is a **build artifact** (wrong `libcudart` → `nsm=1`), not a property
+of the model or the source — it hit every full-attention layer in the
+profiled binary (an all-full-attention model would run the 2-block flash
+kernel on all 64 layers, not 16). The "llama.cpp is competitive on
+all-full-attention prefill" claim was measured on the broken build and must
+be re-checked against the fixed build (correct `libcudart`).
 
 ---
 
@@ -151,10 +179,13 @@ flash-linear-attention component with a **chunked** prefill plus a
 fused-recurrent decode.
 
 But an nsys 16K-prefill profile shows GDN is only **~2% of GPU time** — it
-is *not* the prefill bottleneck. The bottleneck is the full-attention
-**flash kernel** (`flash_attn_ext_f16`), which the profiled binary launches
-with a **2-block grid** on a 170-SM GPU (~99% idle, ~2.3 TFLOP/s ≈ 0.1% of
-peak) and which accounts for **83%** of GPU time. The current source's
-stream-K `launch_fattn` fixes the grid (→ 170 blocks); rebuilding should
-collapse that 23.4s to ~0.3s. The earlier "GDN caps the ~160 W / prefill"
-claim (and the blog's "Cause 2") is superseded by this.
+is *not* the prefill bottleneck. The dominant term in the profiled build is
+the full-attention **flash kernel** (`flash_attn_ext_f16`), which that binary
+launches with a **2-block grid** on a 170-SM GPU (~99% idle, ~2.26 TFLOP/s
+≈ 1.08% of the ~210 TFLOP/s peak) and which accounts for **83%** of GPU
+time. The 2-block grid is a **build misconfiguration** (the profiled binary
+linked the distro's CUDA 12.4 `libcudart`, so `nsm` read back as 1 — see
+CLAUDE.md "Build hazards"), not a kernel defect: linking `libcudart.so.13`
+restores `nsm=170` and the grid to 340 blocks (2 per SM × 170 SMs), and the
+fixed build runs 16K prefill at **3,244 tok/s** (was 567). The earlier "GDN caps the ~160 W / prefill" claim
+(and the blog's "Cause 2") is superseded by this.
