@@ -117,44 +117,42 @@ which all source env/env.sh:
   assorted FlashInfer SM120 MoE correctness bugs) — irrelevant to
   dense models but don't generalize the dense finding to MoE.
 
-## Current deployment (2026-08-17)
+## Current deployment (2026-08-19)
 
-Qwen3.8-27B served by **vLLM** on :8000 via `serve/vllm-qwen38.sh`,
-driving opencode. Chosen on measurement, not preference:
+Qwen3.8-27B served by **llama.cpp** on :8080 via `serve/llama.sh`, under
+the `llama-qwen38.service` user unit, driving opencode. MTP on,
+**229376** context, q8_0 KV.
 
-| | llama.cpp | vLLM |
-|---|---|---|
-| same PR review, wall clock | ~20 min | **4 min** |
-| prefill @50K context | ~165 tok/s | **6,713 tok/s** |
-| perplexity (matched protocol) | 2.2542 +/- 0.0876 | 2.2832 |
-
-The quality difference is +1.29% against a +/-3.9% error bar — nothing.
-
-**The llama.cpp speed rows above are SUPERSEDED (2026-08-19).** They were
-measured against a build that linked the wrong CUDA runtime and therefore
-saw a 1-SM GPU (see "Build hazards").
-
-Matched re-measurement at 50K — both engines, MTP on, same prompt, using
-the realistic fixture from `bench/make_fixture.py`:
+Switched from vLLM 2026-08-19 for the context window. Matched
+measurement at 50K — both engines, MTP on, realistic fixture from
+`bench/make_fixture.py`:
 
 | @50K | llama.cpp | vLLM |
 |---|---|---|
 | prefill | 2,659 tok/s | **5,962 tok/s** (2.2x) |
 | decode | **91.8 tok/s** | 89.8 tok/s (tie) |
-| context | **262,144** | 131,072 |
+| context | **229,376 deployed** (262,144 max) | 131,072 |
+| perplexity (matched protocol) | 2.2542 +/- 0.0876 | 2.2832 |
 
-So the real trade is vLLM's 2.2x prefill against llama.cpp's 2x context.
-Decode is a tie. The deployment choice has NOT been revisited.
+Decode is a tie and quality is inside the error bar, so the trade is
+vLLM's 2.2x prefill against 1.75x the context. Prefix caching absorbs
+most prefill after a session's first turn, which is why context won.
 
-Unmatched numbers, kept only because nothing better exists yet:
-llama.cpp fixed @16K is 3,244 tok/s prefill and 63.7 tok/s decode
-(MTP *off*). The vLLM 8,333 / 6,713 / 69.8 / 63.8 figures from
-2026-08-17 were cold-start with MTP state unrecorded — the 69.8 is
-contradicted by Prometheus, which has vLLM decode at median 75.5,
-p90 111.2, peak 127.1 tok/s. Don't quote them.
+**262144 + MTP does not fit** — it OOMs on the KV cache allocation at
+load. 229376 leaves ~1.1 GiB headroom of 32 GiB. The draft head costs
+~3 GiB; without MTP the full 262144 fits.
 
-The old "~20 min vs 4 min" PR-review wall clock has NOT been re-measured
-and should not be quoted at all.
+To switch back: `systemctl --user disable --now llama-qwen38.service &&
+systemctl --user enable --now vllm-qwen38.service`, and set
+`opencode.json` `baseURL` to :8000 and `limit.context` to 131072. The
+units `Conflicts=` each other, so they will not both run.
+
+Numbers from before 2026-08-19 came from a build that read
+`multiProcessorCount` as 1 (see "Build hazards") and are retracted: the
+old "~20 min vs 4 min" PR review, "vLLM prefills 15-40x faster", and the
+2026-08-17 vLLM set (8,333 / 6,713 / 69.8 / 63.8). The 69.8 decode is
+contradicted by Prometheus, which has vLLM at median 75.5, p90 111.2,
+peak 127.1 tok/s. Don't quote any of them.
 
 Things that cost real time to learn, all in notes/ and serve/README.md:
 
@@ -176,20 +174,31 @@ Things that cost real time to learn, all in notes/ and serve/README.md:
   ~2x at every context (not 2.07x -> 1.06x), and KV dtype is a ~2%
   spread with f16 marginally *fastest* at 16K and 50K (not "f16 is 3.7x
   slower at 50K"). Re-measured 2026-08-19; see notes/llamacpp-vs-vllm.md.
-- Prefix caching dominates agentic workloads (93% hit rate, TTFT 0.38s)
-  and was **off** by default in vLLM.
+- Prefix caching dominates agentic workloads (93% hit rate, TTFT 0.38s).
+  It was **off** by default in vLLM; llama.cpp enables it by default.
 - Restarting a server wipes its KV cache, so the next turn re-prefills
   everything. Don't restart mid-session and then time the next turn.
 
 Keep `opencode.json`'s `limit.context` equal to the server's actual
-`--max-model-len` (currently **131072**). vLLM **rejects** over-length
-requests rather than truncating.
+context (currently **229376**, set in `llama-qwen38.service`). Both
+engines reject over-length requests rather than truncating. opencode
+also needs `baseURL` on the right port: **:8080** for llama.cpp, :8000
+for vLLM.
 
-MTP runs at `num_speculative_tokens: 2` and
-`--gpu-memory-utilization 0.95`, which fits the full window *and* keeps
-~97% of the speedup (132 vs 136 tok/s). n=3 needs 5.03 GiB of KV and
-forces context down to 82K, where opencode starts compacting — and
-compaction rewrites the prefix, which is a full cache miss.
+llama.cpp **ignores the `model` field**, so the `qwen3.8-27b-medium` /
+`-low` entries in `opencode.json` keep working even though `/v1/models`
+lists only `qwen3.8-27b`. Their `chat_template_kwargs.reasoning_effort`
+is honored: measured 1,607 / 2,412 / 6,341 chars of reasoning for
+low / medium / high on the same prompt.
+
+MTP is worth ~2x decode on both engines at every context measured on a
+correct build. On llama.cpp it is `LLAMA_SPEC=draft-mtp`; on vLLM it is
+`num_speculative_tokens: 2` with `--gpu-memory-utilization 0.95` (n=3
+needs 5.03 GiB of KV and forces context to 82K, where opencode starts
+compacting — and compaction rewrites the prefix, a full cache miss).
+
+Draft acceptance is the health check for MTP: ~49% on realistic work.
+100% means the fixture is letting the model copy its input.
 
 ## Baseline (Qwen3-14B-FP8)
 Qwen3-14B-FP8, 1024/256, rate 4: 1011 tok/s out, TPOT 15.9ms,

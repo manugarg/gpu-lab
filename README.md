@@ -10,11 +10,12 @@ deployed.
 
 ## Currently deployed
 
-Qwen3.8-27B served by vLLM on :8000, driving opencode:
+Qwen3.8-27B served by llama.cpp on :8080, driving opencode. Runs under
+the `llama-qwen38.service` user unit, so it survives logout:
 
 ```
-./serve/vllm-qwen38.sh          # vLLM + MTP, 131K context   (daily driver)
-./serve/llama.sh                # llama.cpp alternative, :8080
+./serve/llama.sh                # llama.cpp + MTP, 229K context  (daily driver)
+./serve/vllm-qwen38.sh          # vLLM alternative, :8000
 ./serve/monitor.sh              # live throughput + GPU view
 ```
 
@@ -25,11 +26,12 @@ fixture:
 |---|---|---|
 | prefill | 2,659 tok/s | **5,962 tok/s** (2.2x) |
 | decode | **91.8 tok/s** | 89.8 tok/s (tie) |
-| context | **262,144** | 131,072 |
+| context | **229,376 deployed** | 131,072 |
 
-The trade is vLLM's prefill speed against llama.cpp's 2x context window;
-decode is a tie. No measurable quality difference between the two
-quantizations (perplexity 2.2542 vs 2.2832, inside the error bar).
+Deployed on llama.cpp for the context window: decode is a tie, quality
+is inside the error bar (perplexity 2.2542 vs 2.2832), and prefix caching
+absorbs most of vLLM's prefill advantage after a session's first turn.
+229,376 is the ceiling with MTP enabled — 262,144 OOMs on the KV cache.
 
 ## Scripts
 
