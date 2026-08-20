@@ -74,8 +74,9 @@ For LLM inference the minimum split is **prefill** (reading the prompt)
 versus **decode** (generating tokens). They're bound by different
 things — prefill is compute-bound, decode is memory-bandwidth-bound — so
 "tokens per second" without that split says very little. In my case
-prefill was 63% of wall time on one engine and 3% on the other. Until
-you know that, every hypothesis is a guess about the wrong half.
+prefill dominated wall time on one engine and was almost invisible on
+the other. Until you know which, every hypothesis is a guess about the
+wrong half.
 
 Then split by kernel. A profiler summary took minutes and killed two
 theories I'd carried for a week:
@@ -108,10 +109,10 @@ nvidia-smi -l 1 --format=csv \
   --query-gpu=power.draw,utilization.gpu
 ```
 
-My card drew **~160 W of a ~575 W budget** while claiming full
-utilization. After the fix, the identical workload drew **570 W**. That
-number costs nothing to collect, and I had been watching it for days
-without thinking about it.
+On an identical 16K prefill the card averaged **202 W of a ~575 W
+budget** while claiming full utilization. After the fix the same work
+averaged **532 W**, peaking at 609. That number costs nothing to collect,
+and I had been watching it for days without thinking about it.
 
 ![Board power during an identical 16,000-token prefill. The broken build
 holds about 200 W for 29 seconds; the fixed build spikes to roughly 600 W
@@ -120,8 +121,9 @@ energy.](power-draw-broken-vs-fixed.png)
 
 The shapes are the whole story. Same prompt, same GPU, same model: a low
 flat plateau that runs forever, against a short square block that pins
-the card. And the area under each curve is energy — **5.85 kJ broken vs
-2.87 kJ fixed**. The misconfigured build didn't just take 5.9x longer,
+the card. Those are means of 202 W and 532 W; the fixed run's plateau
+sits near 600 W, just above the card's rated 575. And the area under
+each curve is energy — **5.85 kJ broken vs 2.87 kJ fixed**. The misconfigured build didn't just take 5.9x longer,
 it burned roughly *twice the energy* to do the same work.
 
 If you publish one extra column with a benchmark, publish watts.
@@ -202,18 +204,22 @@ and assert it's sane.** `assert(nsm > 1)` would have saved all of this.
 
 Same build, same flags, same prompts — only the linked runtime changed:
 
-| | before | after | |
+| speculative decoding off | before | after | |
 |---|---|---|---|
-| prefill @16K | 567 tok/s | **3,244** | 5.7x |
+| prefill @16K | 567 tok/s | **3,303** | 5.8x |
 | prefill @50K | ~165 tok/s | **2,754** | 16.7x |
 | decode @50K | 35.2 tok/s | **57.4** | 1.6x |
-| power | ~160 W | **570 W** | |
+| power (16K prefill, mean) | 202 W | **532 W** | |
 
 A 49,737-token prefill went from about five minutes to 18 seconds.
 
+Speculative decoding is off in that table so it isolates the build
+change; the deployed configuration at the top of this post has it on,
+which is why its decode figures are higher.
+
 Four separate published "findings" dissolved with it:
 
-- The 40x engine gap became 2.4x.
+- The 40x engine gap became 2.2x.
 - "f16 KV cache is 3.7x slower at long context" became a 2% spread. The
   format pushing the most data through the starved kernel had simply
   suffered most.
